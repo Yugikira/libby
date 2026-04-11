@@ -27,6 +27,7 @@ def fetch(
     batch_file: Optional[Path] = typer.Option(None, "--batch", "-b", help="File with DOIs (one per line)"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Override papers directory"),
     source: Optional[str] = typer.Option(None, "--source", "-s", help="Use specific source only (crossref, unpaywall, s2, arxiv, pmc, biorxiv, scihub)"),
+    use_free_proxy: bool = typer.Option(False, "--free-proxy", help="Use free proxies for Sci-hub (slower but may bypass blocks)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show PDF URL without downloading"),
     no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub source"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
@@ -42,11 +43,13 @@ def fetch(
         crossref -> unpaywall -> s2 (Semantic Scholar) -> arxiv -> pmc -> biorxiv -> scihub
 
     Use --source to skip cascade and use only one source.
+    Use --free-proxy to try free proxies for Sci-hub (may help bypass CAPTCHA).
 
     Examples:
         libby fetch 10.1007/s11142-016-9368-9
         libby fetch --batch dois.txt
         libby fetch 10.1234/abc --source unpaywall
+        libby fetch 10.1234/abc --source scihub --free-proxy
         libby fetch 10.1234/abc --dry-run
     """
     if not no_env_check:
@@ -70,7 +73,7 @@ def fetch(
         raise typer.Exit(1)
 
     async def run_fetch():
-        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source)
+        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source, use_free_proxy)
 
     results = asyncio.run(run_fetch())
     _display_results(results, dry_run)
@@ -99,15 +102,17 @@ async def _process_batch_fetch(
     dry_run: bool,
     no_scihub: bool,
     source: Optional[str] = None,
+    use_free_proxy: bool = False,
 ) -> list:
     """Process batch of DOIs.
 
     Args:
         source: If specified, use only this source (skip cascade)
+        use_free_proxy: Use free proxies for Sci-hub
     """
 
     extractor = MetadataExtractor(config)
-    fetcher = PDFFetcher(config)
+    fetcher = PDFFetcher(config, use_free_proxy=use_free_proxy)
 
     results = []
 

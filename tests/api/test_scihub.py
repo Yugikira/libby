@@ -2,12 +2,32 @@
 
 import pytest
 from unittest.mock import AsyncMock, patch
-from libby.api.scihub import ScihubAPI
+from libby.api.scihub import ScihubAPI, MANUAL_DOWNLOAD_HINT
 
 
 @pytest.mark.asyncio
 async def test_get_pdf_url_success():
-    """Test successful PDF URL extraction."""
+    """Test successful PDF URL extraction with embed tag."""
+    api = ScihubAPI()
+
+    mock_html = """
+    <html>
+    <embed src="https://sci-hub.ru/paper.pdf" type="application/pdf">
+    </html>
+    """
+
+    with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
+        mock_get_html.return_value = mock_html
+
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
+
+        assert pdf_url == "https://sci-hub.ru/paper.pdf"
+        assert error is None
+
+
+@pytest.mark.asyncio
+async def test_get_pdf_url_iframe_fallback():
+    """Test iframe fallback pattern."""
     api = ScihubAPI()
 
     mock_html = """
@@ -19,9 +39,10 @@ async def test_get_pdf_url_success():
     with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
         mock_get_html.return_value = mock_html
 
-        pdf_url = await api.get_pdf_url("10.1234/test")
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
 
         assert pdf_url == "https://sci-hub.ru/paper.pdf"
+        assert error is None
 
 
 @pytest.mark.asyncio
@@ -31,16 +52,61 @@ async def test_get_pdf_url_relative_url():
 
     mock_html = """
     <html>
-    <iframe src="//sci-hub.ru/paper.pdf"></iframe>
+    <embed src="//sci-hub.ru/paper.pdf" type="application/pdf">
     </html>
     """
 
     with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
         mock_get_html.return_value = mock_html
 
-        pdf_url = await api.get_pdf_url("10.1234/test")
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
 
         assert pdf_url == "https://sci-hub.ru/paper.pdf"
+        assert error is None
+
+
+@pytest.mark.asyncio
+async def test_get_pdf_url_downloads_path():
+    """Test /downloads path handling."""
+    api = ScihubAPI()
+
+    mock_html = """
+    <html>
+    <embed src="/downloads/paper.pdf" type="application/pdf">
+    </html>
+    """
+
+    with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
+        mock_get_html.return_value = mock_html
+
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
+
+        assert pdf_url == "https://sci-hub.ru/downloads/paper.pdf"
+        assert error is None
+
+
+@pytest.mark.asyncio
+async def test_get_pdf_url_captcha_detected():
+    """Test CAPTCHA detection returns manual download hint."""
+    api = ScihubAPI()
+
+    mock_html = """
+    <html>
+    <body>
+    <div class="g-recaptcha"></div>
+    </body>
+    </html>
+    """
+
+    with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
+        mock_get_html.return_value = mock_html
+
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
+
+        assert pdf_url is None
+        assert error is not None
+        assert "CAPTCHA" in error
+        assert "Manual download" in error
 
 
 @pytest.mark.asyncio
@@ -53,19 +119,54 @@ async def test_get_pdf_url_not_found():
     with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
         mock_get_html.return_value = mock_html
 
-        pdf_url = await api.get_pdf_url("10.1234/test")
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
 
         assert pdf_url is None
+        assert error is not None
+        assert "no pdf url found" in error.lower()
 
 
 @pytest.mark.asyncio
 async def test_get_pdf_url_network_error():
-    """Test network error handling."""
+    """Test network error handling returns error message."""
     api = ScihubAPI()
 
     with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
         mock_get_html.side_effect = Exception("Connection failed")
 
-        pdf_url = await api.get_pdf_url("10.1234/test")
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
 
         assert pdf_url is None
+        assert error is not None
+        assert "Request failed" in error
+
+
+@pytest.mark.asyncio
+async def test_get_pdf_url_page_fetch_failed():
+    """Test when page fetch returns None."""
+    api = ScihubAPI()
+
+    with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
+        mock_get_html.return_value = None
+
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
+
+        assert pdf_url is None
+        assert error is not None
+        assert "Failed to fetch page" in error
+
+
+@pytest.mark.asyncio
+async def test_use_free_proxy_parameter():
+    """Test that use_free_proxy parameter is stored."""
+    api = ScihubAPI(use_free_proxy=True)
+
+    assert api.use_free_proxy is True
+
+
+@pytest.mark.asyncio
+async def test_default_no_free_proxy():
+    """Test default behavior without free proxy."""
+    api = ScihubAPI()
+
+    assert api.use_free_proxy is False

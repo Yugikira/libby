@@ -10,7 +10,7 @@ from libby.api.semantic_scholar import SemanticScholarAPI
 from libby.api.arxiv import ArxivAPI
 from libby.api.pmc import PMCAPI
 from libby.api.biorxiv import BiorxivAPI
-from libby.api.scihub import ScihubAPI
+from libby.api.scihub import ScihubAPI, MANUAL_DOWNLOAD_HINT
 from libby.api.serpapi import SerpapiAPI, SerpapiConfirmationNeeded
 
 
@@ -31,15 +31,16 @@ class PDFFetcher:
         "serpapi",
     ]
 
-    def __init__(self, config: LibbyConfig):
+    def __init__(self, config: LibbyConfig, use_free_proxy: bool = False):
         self.config = config
+        self.use_free_proxy = use_free_proxy
 
         # Initialize API clients
         self.crossref = CrossrefAPI()
         self.unpaywall = UnpaywallAPI() if os.getenv("EMAIL") else None
         self.s2 = SemanticScholarAPI(api_key=os.getenv("S2_API_KEY"))
         self.biorxiv = BiorxivAPI()
-        self.scihub = ScihubAPI(config.scihub_url)
+        self.scihub = ScihubAPI(config.scihub_url, use_free_proxy=use_free_proxy)
         self.serpapi = SerpapiAPI() if os.getenv("SERPAPI_API_KEY") else None
 
         # Stateless URL builders
@@ -56,6 +57,7 @@ class PDFFetcher:
         source = None
         metadata = {}
         external_ids = {}
+        last_error = None
 
         # 1. Crossref OA
         if not pdf_url:
@@ -94,23 +96,27 @@ class PDFFetcher:
             if pdf_url:
                 source = "biorxiv"
 
-        # 7. Sci-hub
+        # 7. Sci-hub (returns tuple: pdf_url, error)
         if not pdf_url:
-            pdf_url = await self.scihub.get_pdf_url(doi)
+            pdf_url, error = await self.scihub.get_pdf_url(doi)
             if pdf_url:
                 source = "scihub"
+            elif error:
+                last_error = error
 
         # 8. Serpapi (raises exception for user confirmation)
         if not pdf_url and self.serpapi:
             raise SerpapiConfirmationNeeded(doi)
 
         if not pdf_url:
+            # Use last_error if available, otherwise generic message
+            error_msg = last_error or "No PDF found from any source"
             return FetchResult(
                 doi=doi,
                 success=False,
                 source=None,
                 pdf_url=None,
-                error="No PDF found from any source",
+                error=error_msg,
             )
 
         return FetchResult(
@@ -220,28 +226,19 @@ class PDFFetcher:
                 found_info = True
 
         elif source == "scihub":
-            # Try to get PDF URL from scihub
-            try:
-                pdf_url = await self.scihub.get_pdf_url(doi)
-                if pdf_url:
-                    source_name = "scihub"
-                    found_info = True
-                else:
-                    # Sci-hub returned None - could be CAPTCHA or network issue
-                    return FetchResult(
-                        doi=doi,
-                        success=False,
-                        source=None,
-                        pdf_url=None,
-                        error="Sci-hub returned no PDF (may require CAPTCHA or blocked)",
-                    )
-            except Exception as e:
+            # Try to get PDF URL from scihub (returns tuple)
+            pdf_url, error = await self.scihub.get_pdf_url(doi)
+            if pdf_url:
+                source_name = "scihub"
+                found_info = True
+            elif error:
+                # Sci-hub returned error (CAPTCHA, network, etc.)
                 return FetchResult(
                     doi=doi,
                     success=False,
                     source=None,
                     pdf_url=None,
-                    error=f"Sci-hub request failed: {str(e)}",
+                    error=error,
                 )
 
         else:

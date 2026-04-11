@@ -5,7 +5,7 @@ AI-friendly CLI tool for scholarly paper management.
 ## Features
 
 - **extract**: Extract metadata from DOI, title, or PDF
-- **fetch**: Download PDFs from OA sources (coming in v0.2)
+- **fetch**: Download PDFs by DOI with source cascade
 - **websearch**: Search academic databases (coming in v0.3)
 
 ## Installation
@@ -52,6 +52,21 @@ cat dois.txt | libby extract
 libby extract doi --format bibtex  # Default
 libby extract doi --format json    # AI-friendly
 ```
+
+### Fetch PDF by DOI
+
+```bash
+libby fetch 10.1007/s11142-016-9368-9
+libby fetch 10.1007/s11142-016-9368-9 --dry-run  # Show URL only
+libby fetch 10.1007/s11142-016-9368-9 --source unpaywall  # Use specific source
+libby fetch 10.1007/s11142-016-9368-9 --source scihub --free-proxy  # Try proxy rotation
+```
+
+Sources cascade order: Crossref OA → Unpaywall → Semantic Scholar → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
+
+Output:
+- `~/.lib/papers/{citekey}/{citekey}.pdf`
+- `~/.lib/papers/{citekey}/{citekey}.bib`
 
 ## Configuration
 
