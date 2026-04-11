@@ -16,7 +16,6 @@ from libby.config.loader import load_config
 from libby.config.env_check import check_env_vars
 from libby.core.metadata import MetadataExtractor
 from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
-from libby.utils.file_ops import FileHandler
 from libby.output.bibtex import BibTeXFormatter
 from libby.models.fetch_result import FetchResult
 
@@ -40,10 +39,10 @@ def fetch(
         ~/.lib/papers/{citekey}/{citekey}.bib
 
     Sources (cascade order):
-        crossref -> unpaywall -> s2 (Semantic Scholar) -> arxiv -> pmc -> biorxiv -> scihub
+        crossref -> unpaywall -> s2 -> arxiv -> pmc -> biorxiv -> scihub
 
-    Use --source to skip cascade and use only one source.
-    Sci-hub uses fallback: aiohttp first, then Selenium if blocked (requires Chrome).
+    Each source: get URL -> try download -> if fail, continue to next.
+    Sci-hub: aiohttp -> Selenium fallback if blocked.
 
     Examples:
         libby fetch 10.1007/s11142-016-9368-9
@@ -128,61 +127,34 @@ async def _process_batch_fetch(
                 progress.update(task, description=f"Extracting metadata for {doi}...")
                 metadata = await extractor.extract_from_doi(doi)
 
-                # Step 2: Fetch PDF (with optional single source)
+                # Step 2: Determine target path
+                target_dir = config.papers_dir / metadata.citekey
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target_pdf = target_dir / f"{metadata.citekey}.pdf"
+
+                # Step 3: Fetch PDF (fetcher handles download internally)
                 progress.update(task, description=f"Downloading PDF for {doi}...")
 
                 if source:
-                    # Use single source only
-                    result = await fetcher.fetch_from_source(doi, source.lower())
+                    result = await fetcher.fetch_from_source(doi, source.lower(), target_pdf)
                 else:
-                    # Full cascade
                     if dry_run:
+                        # Dry run: just get URL, don't download
                         result = await fetcher.fetch(doi)
                         result.pdf_path = None
-                        result.bib_path = None
                     else:
-                        result = await fetcher.fetch(doi)
+                        result = await fetcher.fetch(doi, target_pdf)
 
+                # Step 4: Organize files
                 if result.success and not dry_run:
-                    # Step 3: Download to target location
-                    target_dir = config.papers_dir / metadata.citekey
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    target_pdf = target_dir / f"{metadata.citekey}.pdf"
+                    # PDF already downloaded by fetcher to target_pdf
+                    # Just need to save BibTeX
+                    target_bib = target_dir / f"{metadata.citekey}.bib"
+                    target_bib.write_text(BibTeXFormatter().format(metadata))
 
-                    # Check if PDF already downloaded (Selenium case)
-                    if result.pdf_path and result.pdf_path.exists():
-                        # Move Selenium download to target location
-                        shutil.move(str(result.pdf_path), str(target_pdf))
-                        success = True
-                    elif result.pdf_url:
-                        # Download from URL
-                        success = await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
-
-                        # If download failed, try Sci-hub Selenium as fallback
-                        if not success and result.source != "scihub" and result.source != "scihub_selenium":
-                            try:
-                                downloader = fetcher._get_selenium_downloader()
-                                pdf_path, error = downloader.download_pdf(doi)
-                                if pdf_path and pdf_path.exists():
-                                    shutil.move(str(pdf_path), str(target_pdf))
-                                    result.source = "scihub_selenium_fallback"
-                                    success = True
-                            except Exception:
-                                pass  # Fallback failed, continue with error
-                    else:
-                        success = False
-
-                    if success:
-                        # Step 4: Save BibTeX
-                        target_bib = target_dir / f"{metadata.citekey}.bib"
-                        target_bib.write_text(BibTeXFormatter().format(metadata))
-
-                        result.pdf_path = target_pdf
-                        result.bib_path = target_bib
-                        result.metadata = metadata.to_dict()
-                    else:
-                        result.success = False
-                        result.error = "Download failed"
+                    result.pdf_path = target_pdf
+                    result.bib_path = target_bib
+                    result.metadata = metadata.to_dict()
 
                 progress.update(task, description=f"[green]Done: {metadata.citekey}[/green]")
                 progress.remove_task(task)
@@ -204,9 +176,19 @@ async def _process_batch_fetch(
                 elif os.getenv("SERPAPI_API_KEY"):
                     console.print(SerpapiConfirmationNeeded(e.doi).message)
                     if Confirm.ask("Use Serpapi?"):
-                        # Re-create fetcher without serpapi to avoid infinite loop
                         fetcher.serpapi = None
+                        # Use temp path for Serpapi result
                         result = await fetcher.fetch(doi)
+                        if result.success and result.pdf_path:
+                            # Move to target location
+                            target_dir = config.papers_dir / metadata.citekey
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            target_pdf = target_dir / f"{metadata.citekey}.pdf"
+                            shutil.move(str(result.pdf_path), str(target_pdf))
+                            target_bib = target_dir / f"{metadata.citekey}.bib"
+                            target_bib.write_text(BibTeXFormatter().format(metadata))
+                            result.pdf_path = target_pdf
+                            result.bib_path = target_bib
                         results.append(result)
                     else:
                         results.append(FetchResult(

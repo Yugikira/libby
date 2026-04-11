@@ -2,6 +2,7 @@
 
 import os
 import logging
+import shutil
 from pathlib import Path
 from libby.models.config import LibbyConfig
 from libby.models.fetch_result import FetchResult
@@ -23,7 +24,8 @@ class PDFFetcher:
 
     Order: Crossref OA → Unpaywall → Semantic Scholar → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
 
-    Sci-hub uses fallback strategy: aiohttp first, Selenium on failure.
+    Each source: get URL → try download → if fail, continue to next source.
+    Sci-hub: aiohttp → Selenium fallback.
     """
 
     SOURCES = [
@@ -48,7 +50,7 @@ class PDFFetcher:
         self.scihub = ScihubAPI(config.scihub_url)
         self.serpapi = SerpapiAPI() if os.getenv("SERPAPI_API_KEY") else None
 
-        # Selenium downloader (lazy init, only when aiohttp fails)
+        # Selenium downloader (lazy init)
         self._scihub_downloader: ScihubDownloader | None = None
 
         # Stateless URL builders
@@ -58,162 +60,224 @@ class PDFFetcher:
     def _get_selenium_downloader(self) -> ScihubDownloader:
         """Lazy init Selenium downloader."""
         if self._scihub_downloader is None:
-            # Use temp directory for Selenium downloads
             temp_dir = self.config.papers_dir / "temp"
             self._scihub_downloader = ScihubDownloader(temp_dir)
         return self._scihub_downloader
 
-    async def fetch(self, doi: str) -> FetchResult:
-        """Fetch PDF through cascade.
+    async def fetch(self, doi: str, target_path: Path | None = None) -> FetchResult:
+        """Fetch PDF through cascade with download verification.
+
+        Each source: get URL → attempt download → if fail, continue to next.
+
+        Args:
+            doi: Paper DOI
+            target_path: Target PDF path (optional, creates temp if not provided)
 
         Returns:
-            FetchResult with pdf_url, source, metadata
+            FetchResult with pdf_path if downloaded, pdf_url if URL only
         """
-        pdf_url = None
-        source = None
         metadata = {}
         external_ids = {}
         last_error = None
+        last_source = None
+
+        # Create temp path if not provided
+        if target_path is None:
+            temp_dir = self.config.papers_dir / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            target_path = temp_dir / f"{doi.replace('/', '_').replace(':', '_')}.pdf"
 
         # 1. Crossref OA
         pdf_url, meta = await self.crossref.get_oa_link(doi)
         if pdf_url:
-            source = "crossref_oa"
             metadata.update(meta)
+            if await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="crossref_oa",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("Crossref OA download failed, continuing cascade...")
+            last_error = "Crossref OA download failed"
+            last_source = "crossref_oa"
+
+        # Get external_ids from S2 early (needed for arxiv/PMC)
+        _, _, external_ids = await self.s2.get_pdf_url(doi)
 
         # 2. Unpaywall
-        if not pdf_url and self.unpaywall:
+        if self.unpaywall:
             pdf_url, meta = await self.unpaywall.get_pdf_url(doi, os.getenv("EMAIL"))
             if pdf_url:
-                source = "unpaywall"
                 metadata.update(meta)
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source="unpaywall",
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
+                logger.warning("Unpaywall download failed, continuing cascade...")
+                last_error = "Unpaywall download failed"
+                last_source = "unpaywall"
 
         # 3. Semantic Scholar
-        if not pdf_url:
-            pdf_url, meta, external_ids = await self.s2.get_pdf_url(doi)
-            if pdf_url:
-                source = "semantic_scholar"
-                metadata.update(meta)
+        pdf_url, meta, _ = await self.s2.get_pdf_url(doi)
+        if pdf_url:
+            metadata.update(meta)
+            if await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="semantic_scholar",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("Semantic Scholar download failed, continuing cascade...")
+            last_error = "Semantic Scholar download failed"
+            last_source = "semantic_scholar"
 
         # 4. arXiv (via external_ids)
-        if not pdf_url and external_ids.get("ArXiv"):
+        if external_ids.get("ArXiv"):
             pdf_url = self._arxiv.get_pdf_url(external_ids["ArXiv"])
-            source = "arxiv"
+            if pdf_url and await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="arxiv",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("arXiv download failed, continuing cascade...")
+            last_error = "arXiv download failed"
+            last_source = "arxiv"
 
         # 5. PMC (via external_ids)
-        if not pdf_url and external_ids.get("PubMedCentral"):
+        if external_ids.get("PubMedCentral"):
             pdf_url = self._pmc.get_pdf_url(external_ids["PubMedCentral"])
-            source = "pmc"
+            if pdf_url and await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="pmc",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("PMC download failed, continuing cascade...")
+            last_error = "PMC download failed"
+            last_source = "pmc"
 
         # 6. bioRxiv
-        if not pdf_url:
-            pdf_url = await self.biorxiv.get_pdf_url(doi)
-            if pdf_url:
-                source = "biorxiv"
+        pdf_url = await self.biorxiv.get_pdf_url(doi)
+        if pdf_url:
+            if await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="biorxiv",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("bioRxiv download failed, continuing cascade...")
+            last_error = "bioRxiv download failed"
+            last_source = "biorxiv"
 
-        # 7. Sci-hub with fallback: aiohttp → Selenium
-        if not pdf_url:
-            # Try aiohttp first
-            pdf_url, error = await self.scihub.get_pdf_url(doi)
-            if pdf_url:
-                source = "scihub"
-                logger.info("Sci-hub via aiohttp succeeded")
-            elif error:
-                logger.warning(f"Sci-hub aiohttp failed: {error}")
-                last_error = error
+        # 7. Sci-hub: aiohttp → Selenium
+        pdf_url, error = await self.scihub.get_pdf_url(doi)
+        if pdf_url:
+            if await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="scihub",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("Sci-hub aiohttp download failed")
 
-                # Fallback to Selenium
-                logger.info("Trying Sci-hub via Selenium...")
-                try:
-                    downloader = self._get_selenium_downloader()
-                    pdf_path, selenium_error = downloader.download_pdf(doi)
-                    if pdf_path:
-                        source = "scihub_selenium"
-                        logger.info(f"Sci-hub via Selenium succeeded: {pdf_path}")
-                        return FetchResult(
-                            doi=doi,
-                            success=True,
-                            source=source,
-                            pdf_url=pdf_path.as_uri(),
-                            pdf_path=pdf_path,
-                            metadata=metadata,
-                        )
-                    else:
-                        logger.warning(f"Sci-hub Selenium failed: {selenium_error}")
-                        last_error = selenium_error
-                except Exception as e:
-                    logger.warning(f"Sci-hub Selenium error: {e}")
-                    last_error = str(e)
+        # Sci-hub Selenium fallback
+        try:
+            downloader = self._get_selenium_downloader()
+            pdf_path, selenium_error = downloader.download_pdf(doi)
+            if pdf_path and pdf_path.exists():
+                # Move to target path
+                shutil.move(str(pdf_path), str(target_path))
+                return FetchResult(
+                    doi=doi, success=True, source="scihub_selenium",
+                    pdf_url=target_path.as_uri(), pdf_path=target_path, metadata=metadata
+                )
+            last_error = selenium_error or "Sci-hub Selenium failed"
+            last_source = "scihub"
+        except Exception as e:
+            logger.warning(f"Sci-hub Selenium error: {e}")
+            last_error = str(e)
+            last_source = "scihub"
 
         # 8. Serpapi (raises exception for user confirmation)
-        if not pdf_url and self.serpapi:
+        if self.serpapi:
             raise SerpapiConfirmationNeeded(doi)
 
-        if not pdf_url:
-            error_msg = last_error or "No PDF found from any source"
-            return FetchResult(
-                doi=doi,
-                success=False,
-                source=None,
-                pdf_url=None,
-                error=error_msg,
-            )
-
+        # All sources failed
+        error_msg = last_error or "No PDF found from any source"
         return FetchResult(
-            doi=doi,
-            success=True,
-            source=source,
-            pdf_url=pdf_url,
-            metadata=metadata,
+            doi=doi, success=False, source=last_source,
+            pdf_url=None, error=error_msg, metadata=metadata
         )
 
-    async def fetch_from_source(self, doi: str, source: str) -> FetchResult:
+    async def _try_download(self, pdf_url: str, target_path: Path) -> bool:
+        """Try to download PDF from URL.
+
+        Returns:
+            True if download succeeded, False otherwise
+        """
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        return await self.download_pdf_to_file(pdf_url, target_path)
+
+    async def fetch_from_source(self, doi: str, source: str, target_path: Path | None = None) -> FetchResult:
         """Fetch PDF from a specific source only (skip cascade).
 
         Args:
             doi: DOI to fetch
             source: Source name (crossref, unpaywall, s2, arxiv, pmc, biorxiv, scihub)
+            target_path: Target PDF path (optional)
 
         Returns:
             FetchResult with pdf_url from specified source
         """
-        pdf_url = None
         metadata = {}
         source_name = None
         found_info = False
+
+        if target_path is None:
+            temp_dir = self.config.papers_dir / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            target_path = temp_dir / f"{doi.replace('/', '_').replace(':', '_')}.pdf"
 
         if source == "crossref":
             pdf_url, meta = await self.crossref.get_oa_link(doi)
             if meta:
                 found_info = True
-            if pdf_url:
                 metadata.update(meta)
+            if pdf_url:
                 source_name = "crossref_oa"
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
 
         elif source == "unpaywall":
             if self.unpaywall:
                 pdf_url, meta = await self.unpaywall.get_pdf_url(doi, os.getenv("EMAIL"))
                 if meta:
                     found_info = True
-                if pdf_url:
                     metadata.update(meta)
+                if pdf_url:
                     source_name = "unpaywall"
+                    if await self._try_download(pdf_url, target_path):
+                        return FetchResult(
+                            doi=doi, success=True, source=source_name,
+                            pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                        )
             else:
                 return FetchResult(
-                    doi=doi,
-                    success=False,
-                    source=None,
-                    pdf_url=None,
-                    error="Unpaywall unavailable: EMAIL env var not set",
+                    doi=doi, success=False, source=None, pdf_url=None,
+                    error="Unpaywall unavailable: EMAIL env var not set"
                 )
 
         elif source == "s2":
             pdf_url, meta, external_ids = await self.s2.get_pdf_url(doi)
             if meta or external_ids:
                 found_info = True
-            if pdf_url:
                 metadata.update(meta)
+            if pdf_url:
                 source_name = "semantic_scholar"
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
 
         elif source == "arxiv":
             _, _, external_ids = await self.s2.get_pdf_url(doi)
@@ -222,14 +286,11 @@ class PDFFetcher:
             if external_ids.get("ArXiv"):
                 pdf_url = self._arxiv.get_pdf_url(external_ids["ArXiv"])
                 source_name = "arxiv"
-            else:
-                return FetchResult(
-                    doi=doi,
-                    success=False,
-                    source=None,
-                    pdf_url=None,
-                    error="DOI found in S2 but no ArXiv ID available" if found_info else "DOI not found in Semantic Scholar",
-                )
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
 
         elif source == "pmc":
             _, _, external_ids = await self.s2.get_pdf_url(doi)
@@ -238,101 +299,74 @@ class PDFFetcher:
             if external_ids.get("PubMedCentral"):
                 pdf_url = self._pmc.get_pdf_url(external_ids["PubMedCentral"])
                 source_name = "pmc"
-            else:
-                return FetchResult(
-                    doi=doi,
-                    success=False,
-                    source=None,
-                    pdf_url=None,
-                    error="DOI found in S2 but no PubMedCentral ID available" if found_info else "DOI not found in Semantic Scholar",
-                )
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
 
         elif source == "biorxiv":
             if not doi.startswith("10.1101/"):
                 return FetchResult(
-                    doi=doi,
-                    success=False,
-                    source=None,
-                    pdf_url=None,
-                    error="Not a bioRxiv/medRxiv DOI (must start with 10.1101/)",
+                    doi=doi, success=False, source=None, pdf_url=None,
+                    error="Not a bioRxiv/medRxiv DOI (must start with 10.1101)"
                 )
             pdf_url = await self.biorxiv.get_pdf_url(doi)
             if pdf_url:
                 source_name = "biorxiv"
                 found_info = True
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
 
         elif source == "scihub":
-            # Try aiohttp first, then Selenium fallback
+            # Try aiohttp first
             pdf_url, error = await self.scihub.get_pdf_url(doi)
             if pdf_url:
                 source_name = "scihub"
                 found_info = True
-            elif error:
-                # Fallback to Selenium
-                try:
-                    downloader = self._get_selenium_downloader()
-                    pdf_path, selenium_error = downloader.download_pdf(doi)
-                    if pdf_path:
-                        source_name = "scihub_selenium"
-                        found_info = True
-                        return FetchResult(
-                            doi=doi,
-                            success=True,
-                            source=source_name,
-                            pdf_url=pdf_path.as_uri(),
-                            pdf_path=pdf_path,
-                            metadata=metadata,
-                        )
-                    else:
-                        return FetchResult(
-                            doi=doi,
-                            success=False,
-                            source=None,
-                            pdf_url=None,
-                            error=selenium_error,
-                        )
-                except Exception as e:
+                if await self._try_download(pdf_url, target_path):
                     return FetchResult(
-                        doi=doi,
-                        success=False,
-                        source=None,
-                        pdf_url=None,
-                        error=str(e),
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
                     )
+
+            # Selenium fallback
+            try:
+                downloader = self._get_selenium_downloader()
+                pdf_path, selenium_error = downloader.download_pdf(doi)
+                if pdf_path and pdf_path.exists():
+                    shutil.move(str(pdf_path), str(target_path))
+                    return FetchResult(
+                        doi=doi, success=True, source="scihub_selenium",
+                        pdf_url=target_path.as_uri(), pdf_path=target_path, metadata=metadata
+                    )
+                return FetchResult(
+                    doi=doi, success=False, source=None, pdf_url=None,
+                    error=selenium_error or "Sci-hub failed"
+                )
+            except Exception as e:
+                return FetchResult(
+                    doi=doi, success=False, source=None, pdf_url=None, error=str(e)
+                )
 
         else:
             return FetchResult(
-                doi=doi,
-                success=False,
-                source=None,
-                pdf_url=None,
-                error=f"Unknown source: {source}",
+                doi=doi, success=False, source=None, pdf_url=None,
+                error=f"Unknown source: {source}"
             )
 
-        if not pdf_url:
-            error_msg = f"DOI found in {source} but no PDF URL available" if found_info else f"DOI not found in {source} or source unavailable"
-            return FetchResult(
-                doi=doi,
-                success=False,
-                source=None,
-                pdf_url=None,
-                error=error_msg,
-            )
-
+        # No download success
+        error_msg = f"DOI found in {source} but download failed" if found_info else f"DOI not found in {source}"
         return FetchResult(
-            doi=doi,
-            success=True,
-            source=source_name,
-            pdf_url=pdf_url,
-            metadata=metadata,
+            doi=doi, success=False, source=source_name, pdf_url=None,
+            error=error_msg, metadata=metadata
         )
 
     async def download_pdf_to_file(self, pdf_url: str, dest_path: Path) -> bool:
         """Stream download PDF to file.
-
-        1. Stream download to temp file
-        2. Validate: PDF header (%PDF)
-        3. Rename temp to final on success
 
         Returns:
             True on success, False on failure
@@ -344,8 +378,9 @@ class PDFFetcher:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(pdf_url) as resp:
+                async with session.get(pdf_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     if resp.status != 200:
+                        logger.warning(f"Download failed: status {resp.status}")
                         return False
 
                     dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -354,16 +389,20 @@ class PDFFetcher:
                         async for chunk in resp.content.iter_chunked(8192):
                             await f.write(chunk)
 
+                    # Validate PDF header
                     async with aiofiles.open(temp_path, 'rb') as f:
                         header = await f.read(5)
                         if not header.startswith(b'%PDF'):
+                            logger.warning("Download failed: not a valid PDF")
                             temp_path.unlink()
                             return False
 
                     temp_path.rename(dest_path)
+                    logger.info(f"Downloaded: {dest_path}")
                     return True
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Download error: {e}")
             if temp_path.exists():
                 temp_path.unlink()
             return False

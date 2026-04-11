@@ -22,36 +22,43 @@ def fetcher(mock_config):
 
 @pytest.mark.asyncio
 async def test_fetch_crossref_priority(fetcher):
-    """Test Crossref OA is tried first."""
+    """Test Crossref OA is tried first and download succeeds."""
     with patch.object(fetcher.crossref, 'get_oa_link', new_callable=AsyncMock) as mock_crossref:
         mock_crossref.return_value = ("https://crossref.org/paper.pdf", {"title": "Test"})
-
-        result = await fetcher.fetch("10.1234/test")
-
-        assert result.success is True
-        assert result.source == "crossref_oa"
-        assert mock_crossref.called
-
-
-@pytest.mark.asyncio
-async def test_fetch_unpaywall_fallback(fetcher):
-    """Test Unpaywall as fallback when Crossref fails."""
-    with patch.object(fetcher.crossref, 'get_oa_link', new_callable=AsyncMock) as mock_crossref:
-        mock_crossref.return_value = (None, {})
-
-        with patch.object(fetcher.unpaywall, 'get_pdf_url', new_callable=AsyncMock) as mock_unpaywall:
-            mock_unpaywall.return_value = ("https://unpaywall.org/paper.pdf", {"title": "Test"})
+        # Mock download to succeed
+        with patch.object(fetcher, '_try_download', new_callable=AsyncMock) as mock_download:
+            mock_download.return_value = True
 
             result = await fetcher.fetch("10.1234/test")
 
             assert result.success is True
-            assert result.source == "unpaywall"
+            assert result.source == "crossref_oa"
+            assert mock_crossref.called
+            assert mock_download.called
+
+
+@pytest.mark.asyncio
+async def test_fetch_crossref_download_fail_continue_to_unpaywall(fetcher):
+    """Test Unpaywall is tried when Crossref URL download fails."""
+    with patch.object(fetcher.crossref, 'get_oa_link', new_callable=AsyncMock) as mock_crossref:
+        mock_crossref.return_value = ("https://crossref.org/paper.pdf", {"title": "Test"})
+        with patch.object(fetcher.unpaywall, 'get_pdf_url', new_callable=AsyncMock) as mock_unpaywall:
+            mock_unpaywall.return_value = ("https://unpaywall.org/paper.pdf", {"title": "Test2"})
+            with patch.object(fetcher, '_try_download', new_callable=AsyncMock) as mock_download:
+                # Crossref download fails, Unpaywall succeeds
+                mock_download.side_effect = [False, True]
+
+                result = await fetcher.fetch("10.1234/test")
+
+                assert result.success is True
+                assert result.source == "unpaywall"
+                assert mock_download.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_fetch_no_source_found(fetcher):
     """Test when all sources fail."""
-    # Mock all sources to return None
+    # Mock all sources to return None or fail
     with patch.object(fetcher.crossref, 'get_oa_link', new_callable=AsyncMock) as m1:
         m1.return_value = (None, {})
         with patch.object(fetcher.s2, 'get_pdf_url', new_callable=AsyncMock) as m2:
@@ -59,7 +66,6 @@ async def test_fetch_no_source_found(fetcher):
             with patch.object(fetcher.biorxiv, 'get_pdf_url', new_callable=AsyncMock) as m3:
                 m3.return_value = None
                 with patch.object(fetcher.scihub, 'get_pdf_url', new_callable=AsyncMock) as m4:
-                    # ScihubAPI returns tuple (pdf_url, error)
                     m4.return_value = (None, "No PDF found")
                     # Mock Selenium downloader to also fail
                     with patch.object(fetcher, '_get_selenium_downloader') as mock_selenium:
