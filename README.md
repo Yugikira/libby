@@ -6,7 +6,7 @@ AI-friendly CLI tool for scholarly paper management.
 
 - **extract**: Extract metadata from DOI, title, or PDF
 - **fetch**: Download PDFs by DOI with source cascade
-- **websearch**: Search academic databases (coming in v0.3)
+- **websearch**: Search academic databases
 
 ## Installation
 
@@ -59,12 +59,15 @@ libby extract doi --format json    # AI-friendly
 libby fetch 10.1007/s11142-016-9368-9
 libby fetch 10.1007/s11142-016-9368-9 --dry-run  # Show URL only
 libby fetch 10.1007/s11142-016-9368-9 --source unpaywall  # Use specific source
-libby fetch 10.1007/s11142-016-9368-9 --source scihub  # Sci-hub only
+libby fetch 10.1007/s11142-016-9368-9 --source core       # CORE.ac.uk only
+libby fetch 10.1007/s11142-016-9368-9 --source scihub     # Sci-hub only
 ```
 
-Sources cascade order: Crossref OA → Unpaywall → Semantic Scholar → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
+Sources cascade order: Crossref OA → Unpaywall → Semantic Scholar → CORE → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
 
-**Sci-hub Fallback**: When Sci-hub aiohttp request fails (blocked/CAPTCHA), automatically falls back to Selenium WebDriver (requires Chrome browser). If PDF URL download fails from other sources, also retries with Sci-hub Selenium.
+**CORE.ac.uk**: Finds OA versions from institutional repositories worldwide (e.g., SMU ink.library, web.archive.org archives). Useful when publisher links return 403.
+
+**Sci-hub Fallback**: When Sci-hub aiohttp request fails (blocked/CAPTCHA), automatically falls back to Selenium WebDriver (requires Chrome browser).
 
 Output:
 - `~/.lib/papers/{citekey}/{citekey}.pdf`
