@@ -28,3 +28,24 @@ class FileHandler:
         target_bib.write_text(BibTeXFormatter().format(metadata))
 
         return target_dir
+
+    def organize_pdf_bytes(self, pdf_bytes: bytes, metadata: BibTeXMetadata) -> Path:
+        """Save PDF bytes directly to target folder.
+
+        Args:
+            pdf_bytes: PDF file content
+            metadata: Extracted metadata with citekey
+
+        Returns:
+            Target directory path
+        """
+        target_dir = self.papers_dir / metadata.citekey
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        target_pdf = target_dir / f"{metadata.citekey}.pdf"
+        target_pdf.write_bytes(pdf_bytes)
+
+        target_bib = target_dir / f"{metadata.citekey}.bib"
+        target_bib.write_text(BibTeXFormatter().format(metadata))
+
+        return target_dir
