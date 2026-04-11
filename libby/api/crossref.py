@@ -90,3 +90,29 @@ class CrossrefAPI(AsyncAPIClient):
             publisher=data.get("publisher"),
             url=data.get("URL"),
         )
+
+    async def get_oa_link(self, doi: str) -> tuple[str | None, dict]:
+        """Get open access PDF URL from Crossref metadata.
+
+        Returns:
+            (pdf_url, metadata) or (None, {}) if not found
+        """
+        data = await self.fetch_by_doi(doi)
+        if not data:
+            return None, {}
+
+        # Check for open access / text-mining link
+        for link in data.get("link", []):
+            content_type = link.get("content-type", "")
+            intended = link.get("intended", "")
+
+            if intended == "text-mining" or "pdf" in content_type:
+                pdf_url = link.get("URL")
+                if pdf_url:
+                    meta = {
+                        "title": data.get("title", [""])[0] if isinstance(data.get("title"), list) else "",
+                        "year": data.get("year"),
+                    }
+                    return pdf_url, meta
+
+        return None, {}
