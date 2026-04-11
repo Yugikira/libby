@@ -133,10 +133,14 @@ class PDFFetcher:
         """
         pdf_url = None
         metadata = {}
+        source_name = None
+        found_info = False  # Track if we found metadata info
 
         # Source mapping
         if source == "crossref":
             pdf_url, meta = await self.crossref.get_oa_link(doi)
+            if meta:  # Found metadata even if no PDF
+                found_info = True
             if pdf_url:
                 metadata.update(meta)
                 source_name = "crossref_oa"
@@ -144,6 +148,8 @@ class PDFFetcher:
         elif source == "unpaywall":
             if self.unpaywall:
                 pdf_url, meta = await self.unpaywall.get_pdf_url(doi, os.getenv("EMAIL"))
+                if meta:  # Found metadata
+                    found_info = True
                 if pdf_url:
                     metadata.update(meta)
                     source_name = "unpaywall"
@@ -153,11 +159,13 @@ class PDFFetcher:
                     success=False,
                     source=None,
                     pdf_url=None,
-                    error="Unpaywall not available (EMAIL env var not set)",
+                    error="Unpaywall unavailable: EMAIL env var not set",
                 )
 
         elif source == "s2":
             pdf_url, meta, external_ids = await self.s2.get_pdf_url(doi)
+            if meta or external_ids:  # Found some info
+                found_info = True
             if pdf_url:
                 metadata.update(meta)
                 source_name = "semantic_scholar"
@@ -165,6 +173,8 @@ class PDFFetcher:
         elif source == "arxiv":
             # Need to get arxiv ID from S2 first
             _, _, external_ids = await self.s2.get_pdf_url(doi)
+            if external_ids:  # Found S2 info
+                found_info = True
             if external_ids.get("ArXiv"):
                 pdf_url = self._arxiv.get_pdf_url(external_ids["ArXiv"])
                 source_name = "arxiv"
@@ -174,12 +184,14 @@ class PDFFetcher:
                     success=False,
                     source=None,
                     pdf_url=None,
-                    error="No arXiv ID found for this DOI",
+                    error="DOI found in S2 but no ArXiv ID available" if found_info else "DOI not found in Semantic Scholar",
                 )
 
         elif source == "pmc":
             # Need to get PMC ID from S2 first
             _, _, external_ids = await self.s2.get_pdf_url(doi)
+            if external_ids:  # Found S2 info
+                found_info = True
             if external_ids.get("PubMedCentral"):
                 pdf_url = self._pmc.get_pdf_url(external_ids["PubMedCentral"])
                 source_name = "pmc"
@@ -189,18 +201,29 @@ class PDFFetcher:
                     success=False,
                     source=None,
                     pdf_url=None,
-                    error="No PubMedCentral ID found for this DOI",
+                    error="DOI found in S2 but no PubMedCentral ID available" if found_info else "DOI not found in Semantic Scholar",
                 )
 
         elif source == "biorxiv":
+            # biorxiv only works for 10.1101 DOIs
+            if not doi.startswith("10.1101/"):
+                return FetchResult(
+                    doi=doi,
+                    success=False,
+                    source=None,
+                    pdf_url=None,
+                    error="Not a bioRxiv/medRxiv DOI (must start with 10.1101/)",
+                )
             pdf_url = await self.biorxiv.get_pdf_url(doi)
             if pdf_url:
                 source_name = "biorxiv"
+                found_info = True
 
         elif source == "scihub":
             pdf_url = await self.scihub.get_pdf_url(doi)
             if pdf_url:
                 source_name = "scihub"
+                found_info = True
 
         else:
             return FetchResult(
@@ -212,12 +235,17 @@ class PDFFetcher:
             )
 
         if not pdf_url:
+            # Provide better error message
+            if found_info:
+                error_msg = f"DOI found in {source} but no PDF URL available"
+            else:
+                error_msg = f"DOI not found in {source} or source unavailable"
             return FetchResult(
                 doi=doi,
                 success=False,
                 source=None,
                 pdf_url=None,
-                error=f"No PDF found from {source}",
+                error=error_msg,
             )
 
         return FetchResult(
