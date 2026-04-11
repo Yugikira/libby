@@ -29,12 +29,23 @@ class CrossrefAPI(AsyncAPIClient):
             return data.get("message")
         return None
 
-    async def search_by_title(self, title: str) -> list[dict]:
-        """Search works by title keywords."""
+    async def search_by_title(self, title: str, rows: int = 5) -> list[dict]:
+        """Search works by bibliographic query.
+
+        Uses query.bibliographic which searches only bibliographic metadata
+        (title, author, journal, year, etc.) for better accuracy.
+
+        Args:
+            title: Search query (can include title, author, year, etc.)
+            rows: Number of results to return (default 5, max 10)
+
+        Returns:
+            List of work items sorted by relevance score.
+        """
         url = f"{self.BASE_URL}/works"
         params = {
-            "query.title": title,
-            "rows": 10,
+            "query.bibliographic": title,
+            "rows": min(rows, 10),
         }
         if self.mailto:
             params["mailto"] = self.mailto
@@ -42,7 +53,7 @@ class CrossrefAPI(AsyncAPIClient):
         data = await self.get(url, params=params)
         if data.get("status") == "ok":
             items = data.get("message", {}).get("items", [])
-            return items[:5]  # Return top 5 results
+            return items
         return []
 
     def _parse_to_metadata(self, data: dict) -> BibTeXMetadata:
