@@ -21,14 +21,12 @@ from libby.models.fetch_result import FetchResult
 
 console = Console()
 
-fetch_app = typer.Typer(name="fetch", help="Download PDF with metadata extraction")
 
-
-@fetch_app.command()
 def fetch(
     input: Optional[str] = typer.Argument(None, help="DOI to fetch"),
     batch_file: Optional[Path] = typer.Option(None, "--batch", "-b", help="File with DOIs (one per line)"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Override papers directory"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Use specific source only (crossref, unpaywall, s2, arxiv, pmc, biorxiv, scihub)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show PDF URL without downloading"),
     no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub source"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
@@ -40,9 +38,15 @@ def fetch(
         ~/.lib/papers/{citekey}/{citekey}.pdf
         ~/.lib/papers/{citekey}/{citekey}.bib
 
+    Sources (cascade order):
+        crossref -> unpaywall -> s2 (Semantic Scholar) -> arxiv -> pmc -> biorxiv -> scihub
+
+    Use --source to skip cascade and use only one source.
+
     Examples:
         libby fetch 10.1007/s11142-016-9368-9
         libby fetch --batch dois.txt
+        libby fetch 10.1234/abc --source unpaywall
         libby fetch 10.1234/abc --dry-run
     """
     if not no_env_check:
@@ -59,11 +63,17 @@ def fetch(
         console.print("[red]No DOI provided. Use --help for usage.[/red]")
         raise typer.Exit(1)
 
+    # Validate source option
+    valid_sources = ["crossref", "unpaywall", "s2", "arxiv", "pmc", "biorxiv", "scihub"]
+    if source and source.lower() not in valid_sources:
+        console.print(f"[red]Invalid source '{source}'. Valid options: {', '.join(valid_sources)}[/red]")
+        raise typer.Exit(1)
+
     async def run_fetch():
-        return await _process_batch_fetch(dois, config, dry_run, no_scihub)
+        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source)
 
     results = asyncio.run(run_fetch())
-    _display_results(results)
+    _display_results(results, dry_run)
 
     if any(not r.success for r in results):
         raise typer.Exit(1)
@@ -88,8 +98,13 @@ async def _process_batch_fetch(
     config: LibbyConfig,
     dry_run: bool,
     no_scihub: bool,
+    source: Optional[str] = None,
 ) -> list:
-    """Process batch of DOIs."""
+    """Process batch of DOIs.
+
+    Args:
+        source: If specified, use only this source (skip cascade)
+    """
 
     extractor = MetadataExtractor(config)
     fetcher = PDFFetcher(config)
@@ -110,35 +125,40 @@ async def _process_batch_fetch(
                 progress.update(task, description=f"Extracting metadata for {doi}...")
                 metadata = await extractor.extract_from_doi(doi)
 
-                # Step 2: Fetch PDF
+                # Step 2: Fetch PDF (with optional single source)
                 progress.update(task, description=f"Downloading PDF for {doi}...")
 
-                if dry_run:
-                    result = await fetcher.fetch(doi)
-                    result.pdf_path = None
-                    result.bib_path = None
+                if source:
+                    # Use single source only
+                    result = await fetcher.fetch_from_source(doi, source.lower())
                 else:
-                    result = await fetcher.fetch(doi)
+                    # Full cascade
+                    if dry_run:
+                        result = await fetcher.fetch(doi)
+                        result.pdf_path = None
+                        result.bib_path = None
+                    else:
+                        result = await fetcher.fetch(doi)
 
-                    if result.success:
-                        # Step 3: Download to target location
-                        target_dir = config.papers_dir / metadata.citekey
-                        target_dir.mkdir(parents=True, exist_ok=True)
-                        target_pdf = target_dir / f"{metadata.citekey}.pdf"
+                if result.success and not dry_run:
+                    # Step 3: Download to target location
+                    target_dir = config.papers_dir / metadata.citekey
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    target_pdf = target_dir / f"{metadata.citekey}.pdf"
 
-                        success = await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
+                    success = await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
 
-                        if success:
-                            # Step 4: Save BibTeX
-                            target_bib = target_dir / f"{metadata.citekey}.bib"
-                            target_bib.write_text(BibTeXFormatter().format(metadata))
+                    if success:
+                        # Step 4: Save BibTeX
+                        target_bib = target_dir / f"{metadata.citekey}.bib"
+                        target_bib.write_text(BibTeXFormatter().format(metadata))
 
-                            result.pdf_path = target_pdf
-                            result.bib_path = target_bib
-                            result.metadata = metadata.to_dict()
-                        else:
-                            result.success = False
-                            result.error = "Download failed"
+                        result.pdf_path = target_pdf
+                        result.bib_path = target_bib
+                        result.metadata = metadata.to_dict()
+                    else:
+                        result.success = False
+                        result.error = "Download failed"
 
                 progress.update(task, description=f"[green]Done: {metadata.citekey}[/green]")
                 progress.remove_task(task)
@@ -153,6 +173,8 @@ async def _process_batch_fetch(
                     results.append(FetchResult(
                         doi=doi,
                         success=False,
+                        source=None,
+                        pdf_url=None,
                         error="All sources failed, Sci-hub disabled by --no-scihub",
                     ))
                 elif os.getenv("SERPAPI_API_KEY"):
@@ -166,12 +188,16 @@ async def _process_batch_fetch(
                         results.append(FetchResult(
                             doi=doi,
                             success=False,
+                            source=None,
+                            pdf_url=None,
                             error="User declined Serpapi",
                         ))
                 else:
                     results.append(FetchResult(
                         doi=doi,
                         success=False,
+                        source=None,
+                        pdf_url=None,
                         error="All sources failed, no Serpapi key available",
                     ))
 
@@ -181,6 +207,8 @@ async def _process_batch_fetch(
                 results.append(FetchResult(
                     doi=doi,
                     success=False,
+                    source=None,
+                    pdf_url=None,
                     error=str(e),
                 ))
 
@@ -190,7 +218,7 @@ async def _process_batch_fetch(
     return results
 
 
-def _display_results(results: list):
+def _display_results(results: list, dry_run: bool = False):
     """Display fetch results summary."""
 
     succeeded = [r for r in results if r.success]
@@ -199,7 +227,10 @@ def _display_results(results: list):
     if succeeded:
         console.print("\n[green]Successfully fetched:[/green]")
         for r in succeeded:
-            console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_path}")
+            if dry_run:
+                console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_url}")
+            else:
+                console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_path}")
 
     if failed:
         console.print("\n[red]Failed:[/red]")

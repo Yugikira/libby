@@ -121,6 +121,113 @@ class PDFFetcher:
             metadata=metadata,
         )
 
+    async def fetch_from_source(self, doi: str, source: str) -> FetchResult:
+        """Fetch PDF from a specific source only (skip cascade).
+
+        Args:
+            doi: DOI to fetch
+            source: Source name (crossref, unpaywall, s2, arxiv, pmc, biorxiv, scihub)
+
+        Returns:
+            FetchResult with pdf_url from specified source
+        """
+        pdf_url = None
+        metadata = {}
+
+        # Source mapping
+        if source == "crossref":
+            pdf_url, meta = await self.crossref.get_oa_link(doi)
+            if pdf_url:
+                metadata.update(meta)
+                source_name = "crossref_oa"
+
+        elif source == "unpaywall":
+            if self.unpaywall:
+                pdf_url, meta = await self.unpaywall.get_pdf_url(doi, os.getenv("EMAIL"))
+                if pdf_url:
+                    metadata.update(meta)
+                    source_name = "unpaywall"
+            else:
+                return FetchResult(
+                    doi=doi,
+                    success=False,
+                    source=None,
+                    pdf_url=None,
+                    error="Unpaywall not available (EMAIL env var not set)",
+                )
+
+        elif source == "s2":
+            pdf_url, meta, external_ids = await self.s2.get_pdf_url(doi)
+            if pdf_url:
+                metadata.update(meta)
+                source_name = "semantic_scholar"
+
+        elif source == "arxiv":
+            # Need to get arxiv ID from S2 first
+            _, _, external_ids = await self.s2.get_pdf_url(doi)
+            if external_ids.get("ArXiv"):
+                pdf_url = self._arxiv.get_pdf_url(external_ids["ArXiv"])
+                source_name = "arxiv"
+            else:
+                return FetchResult(
+                    doi=doi,
+                    success=False,
+                    source=None,
+                    pdf_url=None,
+                    error="No arXiv ID found for this DOI",
+                )
+
+        elif source == "pmc":
+            # Need to get PMC ID from S2 first
+            _, _, external_ids = await self.s2.get_pdf_url(doi)
+            if external_ids.get("PubMedCentral"):
+                pdf_url = self._pmc.get_pdf_url(external_ids["PubMedCentral"])
+                source_name = "pmc"
+            else:
+                return FetchResult(
+                    doi=doi,
+                    success=False,
+                    source=None,
+                    pdf_url=None,
+                    error="No PubMedCentral ID found for this DOI",
+                )
+
+        elif source == "biorxiv":
+            pdf_url = await self.biorxiv.get_pdf_url(doi)
+            if pdf_url:
+                source_name = "biorxiv"
+
+        elif source == "scihub":
+            pdf_url = await self.scihub.get_pdf_url(doi)
+            if pdf_url:
+                source_name = "scihub"
+
+        else:
+            return FetchResult(
+                doi=doi,
+                success=False,
+                source=None,
+                pdf_url=None,
+                error=f"Unknown source: {source}",
+            )
+
+        if not pdf_url:
+            return FetchResult(
+                doi=doi,
+                success=False,
+                source=None,
+                pdf_url=None,
+                error=f"No PDF found from {source}",
+            )
+
+        return FetchResult(
+            doi=doi,
+            success=True,
+            source=source_name,
+            pdf_url=pdf_url,
+            metadata=metadata,
+        )
+
     async def download_pdf_to_file(self, pdf_url: str, dest_path: Path) -> bool:
         """Stream download PDF to file.
 
