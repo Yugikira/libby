@@ -36,6 +36,9 @@ def main(
 from libby.cli.extract import extract
 app.command(name="extract")(extract)
 
+from libby.cli.fetch import fetch_app
+app.add_typer(fetch_app, name="fetch")
+
 
 if __name__ == "__main__":
     app()
