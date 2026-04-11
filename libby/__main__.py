@@ -32,8 +32,9 @@ def main(
     """libby - Scholarly paper management CLI."""
 
 
-# 子命令将在后续任务中注册
-# app.add_typer(extract_app, name="extract")
+# Register subcommands
+from libby.cli.extract import extract
+app.command(name="extract")(extract)
 
 
 if __name__ == "__main__":
