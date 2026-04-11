@@ -2,11 +2,16 @@
 
 import re
 
-# DOI pattern: 10.xxxx/yyyy where xxxx is 4+ digits
-DOI_PATTERN = r'10\.\d{4,}/[^\s]+'
-DOI_PREFIXES = [
+# DOI pattern per ISO 26324: prefix/suffix
+# prefix = registrant agency code + "." + registrant code
+# Common registrant agencies: 10 (Crossref), m2 (mEDRA), 10a (CNKI)
+DOI_PATTERN = r'[\da-z]+\.[\da-z]+/[^\s]+'
+DOI_URL_PREFIXES = [
     "https://doi.org/",
+    "http://doi.org/",
     "doi.org/",
+]
+DOI_TEXT_PREFIXES = [
     "DOI:",
     "doi:",
     "DOI ",
@@ -18,19 +23,27 @@ def is_doi(text: str) -> bool:
     """Check if a string is a DOI.
 
     Detects:
-    - Direct DOI: 10.xxxx/yyyy
-    - URL format: https://doi.org/10.xxxx/yyyy
-    - Prefix format: doi:10.xxxx/yyyy
-    """
-    text = text.strip()
+    - URL format: https://doi.org/xxx (any valid DOI)
+    - Prefix format: DOI:xxx, doi:xxx
+    - Direct DOI: matches ISO 26324 pattern
 
-    # Check for DOI prefixes
-    for prefix in DOI_PREFIXES:
-        if text.lower().startswith(prefix.lower()):
+    Note: DOI registrant agencies include 10 (Crossref), m2 (mEDRA),
+    10a (CNKI), etc. We accept all valid DOI patterns.
+    """
+    text = text.strip().lower()
+
+    # Check for doi.org URL prefix - always a DOI
+    for prefix in DOI_URL_PREFIXES:
+        if text.startswith(prefix.lower()):
             return True
 
-    # Check for direct DOI pattern
-    if re.match(DOI_PATTERN, text):
+    # Check for text prefix
+    for prefix in DOI_TEXT_PREFIXES:
+        if text.startswith(prefix.lower()):
+            return True
+
+    # Check for direct DOI pattern (e.g., "10.1234/abc" or "m2.123/xyz")
+    if re.match(DOI_PATTERN, text, re.IGNORECASE):
         return True
 
     return False
@@ -54,18 +67,19 @@ def extract_doi_from_text(text: str) -> str | None:
     Handles:
     - Hyphen breaks: 10.1234/abc-\ndef -> 10.1234/abc-def
     - Space breaks: 10.1234/abc\n123 -> 10.1234/abc 123
+    - Various DOI registrant agencies (10, m2, 10a, etc.)
     """
-    pattern = r'(10\.\d{4,}/[^\s]+)'
+    pattern = r'([\da-z]+\.[\da-z]+/[^\s]+)'
 
     # First try direct match
-    match = re.search(pattern, text)
+    match = re.search(pattern, text, re.IGNORECASE)
     if match:
         result = match.group(1)
         # If match ends with hyphen, it might be a hyphen break - try merging
         if result.endswith('-'):
             merged = re.sub(r'-\n', '-', text)
             merged = re.sub(r'\n', ' ', merged)
-            match = re.search(pattern, merged)
+            match = re.search(pattern, merged, re.IGNORECASE)
             if match:
                 return match.group(1)
         return result
@@ -73,7 +87,7 @@ def extract_doi_from_text(text: str) -> str | None:
     # Try merging hyphen breaks
     merged = re.sub(r'-\n', '-', text)
     merged = re.sub(r'\n', ' ', merged)
-    match = re.search(pattern, merged)
+    match = re.search(pattern, merged, re.IGNORECASE)
     if match:
         return match.group(1)
 
