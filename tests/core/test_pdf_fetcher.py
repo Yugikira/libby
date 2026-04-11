@@ -63,18 +63,41 @@ async def test_fetch_no_source_found(fetcher):
         m1.return_value = (None, {})
         with patch.object(fetcher.s2, 'get_pdf_url', new_callable=AsyncMock) as m2:
             m2.return_value = (None, {}, {})
-            with patch.object(fetcher.biorxiv, 'get_pdf_url', new_callable=AsyncMock) as m3:
-                m3.return_value = None
-                with patch.object(fetcher.scihub, 'get_pdf_url', new_callable=AsyncMock) as m4:
-                    m4.return_value = (None, "No PDF found")
-                    # Mock Selenium downloader to also fail
-                    with patch.object(fetcher, '_get_selenium_downloader') as mock_selenium:
-                        mock_downloader = mock_selenium.return_value
-                        mock_downloader.download_pdf.return_value = (None, "Selenium failed")
-                        # Mock serpapi to None to avoid exception
-                        fetcher.serpapi = None
+            with patch.object(fetcher.core, 'get_pdf_url', new_callable=AsyncMock) as m5:
+                m5.return_value = (None, {})
+                with patch.object(fetcher.biorxiv, 'get_pdf_url', new_callable=AsyncMock) as m3:
+                    m3.return_value = None
+                    with patch.object(fetcher.scihub, 'get_pdf_url', new_callable=AsyncMock) as m4:
+                        m4.return_value = (None, "No PDF found")
+                        # Mock Selenium downloader to also fail
+                        with patch.object(fetcher, '_get_selenium_downloader') as mock_selenium:
+                            mock_downloader = mock_selenium.return_value
+                            mock_downloader.download_pdf.return_value = (None, "Selenium failed")
+                            # Mock serpapi to None to avoid exception
+                            fetcher.serpapi = None
 
-                        result = await fetcher.fetch("10.1234/test")
+                            result = await fetcher.fetch("10.1234/test")
 
-                        assert result.success is False
-                        assert "Selenium failed" in result.error
+                            assert result.success is False
+                            assert "Selenium failed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_fetch_core_succeeds_after_s2_fails(fetcher):
+    """Test CORE is tried when S2 URL download fails."""
+    with patch.object(fetcher.crossref, 'get_oa_link', new_callable=AsyncMock) as m1:
+        m1.return_value = (None, {})
+        with patch.object(fetcher.s2, 'get_pdf_url', new_callable=AsyncMock) as m2:
+            # S2 returns URL but download fails (e.g., paywall 403)
+            m2.return_value = ("https://wiley.com/paper.pdf", {"title": "Test"}, {})
+            with patch.object(fetcher.core, 'get_pdf_url', new_callable=AsyncMock) as m3:
+                m3.return_value = ("https://core.ac.uk/download/123.pdf", {"title": "Test"})
+                with patch.object(fetcher, '_try_download', new_callable=AsyncMock) as m_download:
+                    # S2 download fails, CORE succeeds
+                    m_download.side_effect = [False, True]
+
+                    result = await fetcher.fetch("10.1234/test")
+
+                    assert result.success is True
+                    assert result.source == "core"
+                    assert m_download.call_count == 2

@@ -2,6 +2,17 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.3.1] - 2026-04-11
+
+### Added
+- **CORE.ac.uk source** for institutional repository PDF access
+  - Finds OA versions from repositories worldwide that Unpaywall doesn't track
+  - Added to cascade: Crossref → Unpaywall → S2 → **CORE** → arXiv → PMC → bioRxiv → Sci-hub
+  - New `--source core` option for single-source fetching
+
+### Fixed
+- Wiley paywall downloads (status 403) now fall back to CORE instead of failing
+
 ## [0.3.0] - 2026-04-11
 
 ### Added

@@ -12,6 +12,7 @@ from libby.api.semantic_scholar import SemanticScholarAPI
 from libby.api.arxiv import ArxivAPI
 from libby.api.pmc import PMCAPI
 from libby.api.biorxiv import BiorxivAPI
+from libby.api.core import CoreAPI
 from libby.api.scihub import ScihubAPI, MANUAL_DOWNLOAD_HINT
 from libby.api.scihub_selenium import ScihubDownloader
 from libby.api.serpapi import SerpapiAPI, SerpapiConfirmationNeeded
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 class PDFFetcher:
     """Orchestrates PDF fetching through source cascade.
 
-    Order: Crossref OA → Unpaywall → Semantic Scholar → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
+    Order: Crossref OA → Unpaywall → Semantic Scholar → CORE → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
 
     Each source: get URL → try download → if fail, continue to next source.
     Sci-hub: aiohttp → Selenium fallback.
@@ -32,6 +33,7 @@ class PDFFetcher:
         "crossref_oa",
         "unpaywall",
         "semantic_scholar",
+        "core",
         "arxiv",
         "pmc",
         "biorxiv",
@@ -46,6 +48,7 @@ class PDFFetcher:
         self.crossref = CrossrefAPI()
         self.unpaywall = UnpaywallAPI() if os.getenv("EMAIL") else None
         self.s2 = SemanticScholarAPI(api_key=os.getenv("S2_API_KEY"))
+        self.core = CoreAPI()
         self.biorxiv = BiorxivAPI()
         self.scihub = ScihubAPI(config.scihub_url)
         self.serpapi = SerpapiAPI() if os.getenv("SERPAPI_API_KEY") else None
@@ -130,7 +133,20 @@ class PDFFetcher:
             last_error = "Semantic Scholar download failed"
             last_source = "semantic_scholar"
 
-        # 4. arXiv (via external_ids)
+        # 4. CORE.ac.uk (institutional repositories)
+        pdf_url, meta = await self.core.get_pdf_url(doi)
+        if pdf_url:
+            metadata.update(meta)
+            if await self._try_download(pdf_url, target_path):
+                return FetchResult(
+                    doi=doi, success=True, source="core",
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                )
+            logger.warning("CORE download failed, continuing cascade...")
+            last_error = "CORE download failed"
+            last_source = "core"
+
+        # 5. arXiv (via external_ids)
         if external_ids.get("ArXiv"):
             pdf_url = self._arxiv.get_pdf_url(external_ids["ArXiv"])
             if pdf_url and await self._try_download(pdf_url, target_path):
@@ -142,7 +158,7 @@ class PDFFetcher:
             last_error = "arXiv download failed"
             last_source = "arxiv"
 
-        # 5. PMC (via external_ids)
+        # 6. PMC (via external_ids)
         if external_ids.get("PubMedCentral"):
             pdf_url = self._pmc.get_pdf_url(external_ids["PubMedCentral"])
             if pdf_url and await self._try_download(pdf_url, target_path):
@@ -154,7 +170,7 @@ class PDFFetcher:
             last_error = "PMC download failed"
             last_source = "pmc"
 
-        # 6. bioRxiv
+        # 7. bioRxiv
         pdf_url = await self.biorxiv.get_pdf_url(doi)
         if pdf_url:
             if await self._try_download(pdf_url, target_path):
@@ -166,7 +182,7 @@ class PDFFetcher:
             last_error = "bioRxiv download failed"
             last_source = "biorxiv"
 
-        # 7. Sci-hub: aiohttp → Selenium
+        # 8. Sci-hub: aiohttp → Selenium
         pdf_url, error = await self.scihub.get_pdf_url(doi)
         if pdf_url:
             if await self._try_download(pdf_url, target_path):
@@ -194,7 +210,7 @@ class PDFFetcher:
             last_error = str(e)
             last_source = "scihub"
 
-        # 8. Serpapi (raises exception for user confirmation)
+        # 9. Serpapi (raises exception for user confirmation)
         if self.serpapi:
             raise SerpapiConfirmationNeeded(doi)
 
@@ -273,6 +289,19 @@ class PDFFetcher:
                 metadata.update(meta)
             if pdf_url:
                 source_name = "semantic_scholar"
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
+
+        elif source == "core":
+            pdf_url, meta = await self.core.get_pdf_url(doi)
+            if meta:
+                found_info = True
+                metadata.update(meta)
+            if pdf_url:
+                source_name = "core"
                 if await self._try_download(pdf_url, target_path):
                     return FetchResult(
                         doi=doi, success=True, source=source_name,
@@ -413,6 +442,7 @@ class PDFFetcher:
         if self.unpaywall:
             await self.unpaywall.close()
         await self.s2.close()
+        await self.core.close()
         await self.biorxiv.close()
         await self.scihub.close()
         if self._scihub_downloader:

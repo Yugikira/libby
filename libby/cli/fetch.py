@@ -39,7 +39,7 @@ def fetch(
         ~/.lib/papers/{citekey}/{citekey}.bib
 
     Sources (cascade order):
-        crossref -> unpaywall -> s2 -> arxiv -> pmc -> biorxiv -> scihub
+        crossref -> unpaywall -> s2 -> core -> arxiv -> pmc -> biorxiv -> scihub
 
     Each source: get URL -> try download -> if fail, continue to next.
     Sci-hub: aiohttp -> Selenium fallback if blocked.
@@ -66,7 +66,7 @@ def fetch(
         raise typer.Exit(1)
 
     # Validate source option
-    valid_sources = ["crossref", "unpaywall", "s2", "arxiv", "pmc", "biorxiv", "scihub"]
+    valid_sources = ["crossref", "unpaywall", "s2", "core", "arxiv", "pmc", "biorxiv", "scihub"]
     if source and source.lower() not in valid_sources:
         console.print(f"[red]Invalid source '{source}'. Valid options: {', '.join(valid_sources)}[/red]")
         raise typer.Exit(1)
