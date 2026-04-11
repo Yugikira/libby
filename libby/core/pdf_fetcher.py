@@ -220,10 +220,29 @@ class PDFFetcher:
                 found_info = True
 
         elif source == "scihub":
-            pdf_url = await self.scihub.get_pdf_url(doi)
-            if pdf_url:
-                source_name = "scihub"
-                found_info = True
+            # Try to get PDF URL from scihub
+            try:
+                pdf_url = await self.scihub.get_pdf_url(doi)
+                if pdf_url:
+                    source_name = "scihub"
+                    found_info = True
+                else:
+                    # Sci-hub returned None - could be CAPTCHA or network issue
+                    return FetchResult(
+                        doi=doi,
+                        success=False,
+                        source=None,
+                        pdf_url=None,
+                        error="Sci-hub returned no PDF (may require CAPTCHA or blocked)",
+                    )
+            except Exception as e:
+                return FetchResult(
+                    doi=doi,
+                    success=False,
+                    source=None,
+                    pdf_url=None,
+                    error=f"Sci-hub request failed: {str(e)}",
+                )
 
         else:
             return FetchResult(
