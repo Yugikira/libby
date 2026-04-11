@@ -38,9 +38,13 @@ class ScihubAPI(AsyncAPIClient):
 
             pdf_url = self._parse_pdf_url(html)
 
-            # Handle protocol-relative URLs (e.g., "//sci-hub.ru/...")
-            if pdf_url and pdf_url.startswith("//"):
-                pdf_url = "https:" + pdf_url
+            if pdf_url:
+                # Handle protocol-relative URLs (e.g., "//sci-hub.ru/...")
+                if pdf_url.startswith("//"):
+                    pdf_url = "https:" + pdf_url
+                # Handle /downloads path (Sci-hub internal path)
+                elif pdf_url.startswith("/downloads"):
+                    pdf_url = self.scihub_url + pdf_url
 
             return pdf_url
 
@@ -56,18 +60,30 @@ class ScihubAPI(AsyncAPIClient):
             return None
 
     def _parse_pdf_url(self, html: str) -> str | None:
-        """Extract PDF URL from Sci-hub HTML."""
-        # Pattern 1: iframe src with PDF URL
+        """Extract PDF URL from Sci-hub HTML.
+
+        Supports multiple HTML patterns:
+        - <embed src="..."> (primary)
+        - <iframe src="...pdf">
+        - pdfUrl variable
+        - data-url attribute
+        """
+        # Pattern 1: embed src (primary - matches reference implementation)
+        match = re.search(r'<embed[^>]+src=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if match:
+            return match.group(1)
+
+        # Pattern 2: iframe src with PDF URL
         match = re.search(r'<iframe[^>]+src=["\']([^"\']+\.pdf)["\']', html, re.IGNORECASE)
         if match:
             return match.group(1)
 
-        # Pattern 2: pdfUrl variable
+        # Pattern 3: pdfUrl variable
         match = re.search(r'pdfUrl\s*=\s*["\']([^"\']+)["\']', html, re.IGNORECASE)
         if match:
             return match.group(1)
 
-        # Pattern 3: data-url attribute
+        # Pattern 4: data-url attribute
         match = re.search(r'data-url=["\']([^"\']+\.pdf)["\']', html, re.IGNORECASE)
         if match:
             return match.group(1)
