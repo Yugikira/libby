@@ -7,13 +7,13 @@ All notable changes to libby will be documented in this file.
 ### Added
 - **Selenium-based Sci-hub downloader** for reliable PDF downloads when aiohttp fails
 - Automatic fallback strategy: aiohttp first, then Selenium if blocked/CAPTCHA
-- Download fallback: if PDF URL download fails, automatically retry with Sci-hub Selenium
 - Citekey sanitization: invalid filesystem characters (<>:"/\\|?*) replaced with underscore
 
 ### Changed
 - Removed `--free-proxy` option (FreeProxy library proved unreliable)
 - Sci-hub now uses Selenium WebDriver as automatic fallback (requires Chrome browser)
-- PDF downloads are more reliable due to multi-layer fallback strategy
+- **Cascade logic fix**: each source gets URL → tries download → continues to next if download fails
+  (Previously: stopped cascade once URL found, then tried download at CLI level)
 
 ### Dependencies
 - selenium (for Sci-hub WebDriver downloads)
