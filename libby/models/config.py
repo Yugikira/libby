@@ -47,4 +47,8 @@ class LibbyConfig(BaseModel):
     ai_extractor: AIExtractorConfig = Field(default_factory=AIExtractorConfig)
     config_path: Optional[Path] = None
 
+    # Fetch configuration
+    scihub_url: str = "https://sci-hub.ru"
+    pdf_max_size: int = 50 * 1024 * 1024  # 50 MB
+
     model_config = ConfigDict(extra="ignore")
