@@ -6,6 +6,7 @@ from pathlib import Path
 
 from libby.models.result import BatchResult
 from libby.core.metadata import MetadataNotFoundError
+from libby.utils.doi_parser import is_doi
 
 
 def read_stdin_lines() -> list[str]:
@@ -33,7 +34,7 @@ async def process_batch(
                 metadata = await extractor.extract_from_pdf(input_path, use_ai=ai_extract)
             elif input_path.exists():
                 raise MetadataNotFoundError(f"Unsupported file type: {input_path}")
-            elif input_item.startswith("10."):
+            elif is_doi(input_item):
                 metadata = await extractor.extract_from_doi(input_item)
             else:
                 metadata = await extractor.extract_from_title(input_item)

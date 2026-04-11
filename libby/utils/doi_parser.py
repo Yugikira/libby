@@ -2,6 +2,39 @@
 
 import re
 
+# DOI pattern: 10.xxxx/yyyy where xxxx is 4+ digits
+DOI_PATTERN = r'10\.\d{4,}/[^\s]+'
+DOI_PREFIXES = [
+    "https://doi.org/",
+    "doi.org/",
+    "DOI:",
+    "doi:",
+    "DOI ",
+    "doi ",
+]
+
+
+def is_doi(text: str) -> bool:
+    """Check if a string is a DOI.
+
+    Detects:
+    - Direct DOI: 10.xxxx/yyyy
+    - URL format: https://doi.org/10.xxxx/yyyy
+    - Prefix format: doi:10.xxxx/yyyy
+    """
+    text = text.strip()
+
+    # Check for DOI prefixes
+    for prefix in DOI_PREFIXES:
+        if text.lower().startswith(prefix.lower()):
+            return True
+
+    # Check for direct DOI pattern
+    if re.match(DOI_PATTERN, text):
+        return True
+
+    return False
+
 
 def normalize_doi(doi: str) -> str:
     """Normalize DOI string by removing common prefixes."""

@@ -19,6 +19,6 @@ def check_env_vars():
     for var, (name, benefit, fallback) in ENV_VARS.items():
         value = os.getenv(var)
         if value:
-            console.print(f"[green]✓[/green] {var}: {name} enabled ({benefit})")
+            console.print(f"[green][OK][/green] {var}: {name} enabled ({benefit})")
         else:
-            console.print(f"[red]✗[/red] {var}: {name} disabled ({fallback})")
+            console.print(f"[red][--][/red] {var}: {name} disabled ({fallback})")

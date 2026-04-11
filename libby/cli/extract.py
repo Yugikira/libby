@@ -70,7 +70,9 @@ def extract(
     console.print(f"[green]Processing {len(inputs)} input(s)...[/green]")
 
     async def run_extraction():
-        return await process_batch(inputs, extractor, file_handler, ai_extract, copy)
+        results = await process_batch(inputs, extractor, file_handler, ai_extract, copy)
+        await extractor.close()
+        return results
 
     results = run_async(run_extraction())
 
@@ -97,9 +99,6 @@ def extract(
     # Summary
     console.print(f"\n[green]Succeeded: {len(results.succeeded)}[/green]")
     console.print(f"[red]Failed: {len(results.failed)}[/red]")
-
-    # Cleanup
-    run_async(extractor.close())
 
     # Exit code
     if results.failed:
