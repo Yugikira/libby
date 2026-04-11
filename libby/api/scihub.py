@@ -49,11 +49,11 @@ class ScihubAPI(AsyncAPIClient):
 
     async def get_html(self, url: str) -> str | None:
         """Fetch HTML content from URL."""
-        async with self._get_session() as session:
-            async with session.get(url, allow_redirects=True) as resp:
-                if resp.status == 200:
-                    return await resp.text()
-                return None
+        session = await self._get_session()
+        async with session.get(url, allow_redirects=True) as resp:
+            if resp.status == 200:
+                return await resp.text()
+            return None
 
     def _parse_pdf_url(self, html: str) -> str | None:
         """Extract PDF URL from Sci-hub HTML."""
