@@ -1,9 +1,14 @@
 """Citekey formatting."""
 
+import re
 import unicodedata
 
 from libby.models.config import CitekeyConfig
 from libby.models.metadata import BibTeXMetadata
+
+
+# Characters invalid in Windows filenames
+INVALID_CHARS = r'[<>:"/\\|?*]'
 
 
 class CitekeyFormatter:
@@ -34,7 +39,15 @@ class CitekeyFormatter:
         if self.ascii_only:
             result = self._to_ascii(result)
 
+        # Sanitize invalid characters for filesystem
+        result = self._sanitize(result)
+
         return result
+
+    def _sanitize(self, text: str) -> str:
+        """Remove invalid filesystem characters."""
+        # Replace invalid chars with underscore
+        return re.sub(INVALID_CHARS, '_', text)
 
     def _format_author(self, author: list[str]) -> str:
         """Extract author surname."""

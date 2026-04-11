@@ -70,3 +70,24 @@ def test_format_ignored_words():
     citekey = formatter.format(metadata)
     assert "the" not in citekey
     assert "quick" in citekey
+
+
+def test_format_sanitizes_invalid_chars():
+    """Test that invalid filesystem characters are sanitized."""
+    config = load_config(config_path=None)
+    formatter = CitekeyFormatter(config.citekey)
+
+    metadata = BibTeXMetadata(
+        citekey="",
+        author=["Cheng"],
+        title="Seeing is believing: Analysts' forecasts",
+        year=2016,
+    )
+
+    citekey = formatter.format(metadata)
+    # Colon should be replaced with underscore
+    assert ":" not in citekey
+    # Should not contain any invalid chars
+    invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+    for char in invalid_chars:
+        assert char not in citekey

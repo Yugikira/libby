@@ -61,10 +61,14 @@ async def test_fetch_no_source_found(fetcher):
                 with patch.object(fetcher.scihub, 'get_pdf_url', new_callable=AsyncMock) as m4:
                     # ScihubAPI returns tuple (pdf_url, error)
                     m4.return_value = (None, "No PDF found")
-                    # Mock serpapi to None to avoid exception
-                    fetcher.serpapi = None
+                    # Mock Selenium downloader to also fail
+                    with patch.object(fetcher, '_get_selenium_downloader') as mock_selenium:
+                        mock_downloader = mock_selenium.return_value
+                        mock_downloader.download_pdf.return_value = (None, "Selenium failed")
+                        # Mock serpapi to None to avoid exception
+                        fetcher.serpapi = None
 
-                    result = await fetcher.fetch("10.1234/test")
+                        result = await fetcher.fetch("10.1234/test")
 
-                    assert result.success is False
-                    assert result.error == "No PDF found"
+                        assert result.success is False
+                        assert "Selenium failed" in result.error

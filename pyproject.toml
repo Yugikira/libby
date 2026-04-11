@@ -1,6 +1,6 @@
 [project]
 name = "libby"
-version = "0.1.0"
+version = "0.3.0"
 description = "AI-friendly CLI tool for scholarly paper management"
 authors = [{name = "Yugi"}]
 requires-python = ">=3.10"
@@ -17,6 +17,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "scholarly>=1.7.0",
     "openai>=1.0.0",
+    "selenium>=4.43.0",
+    "aiofiles>=25.1.0",
 ]
 
 [project.optional-dependencies]

@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -42,6 +43,7 @@ def fetch(
         crossref -> unpaywall -> s2 (Semantic Scholar) -> arxiv -> pmc -> biorxiv -> scihub
 
     Use --source to skip cascade and use only one source.
+    Sci-hub uses fallback: aiohttp first, then Selenium if blocked (requires Chrome).
 
     Examples:
         libby fetch 10.1007/s11142-016-9368-9
@@ -147,7 +149,28 @@ async def _process_batch_fetch(
                     target_dir.mkdir(parents=True, exist_ok=True)
                     target_pdf = target_dir / f"{metadata.citekey}.pdf"
 
-                    success = await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
+                    # Check if PDF already downloaded (Selenium case)
+                    if result.pdf_path and result.pdf_path.exists():
+                        # Move Selenium download to target location
+                        shutil.move(str(result.pdf_path), str(target_pdf))
+                        success = True
+                    elif result.pdf_url:
+                        # Download from URL
+                        success = await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
+
+                        # If download failed, try Sci-hub Selenium as fallback
+                        if not success and result.source != "scihub" and result.source != "scihub_selenium":
+                            try:
+                                downloader = fetcher._get_selenium_downloader()
+                                pdf_path, error = downloader.download_pdf(doi)
+                                if pdf_path and pdf_path.exists():
+                                    shutil.move(str(pdf_path), str(target_pdf))
+                                    result.source = "scihub_selenium_fallback"
+                                    success = True
+                            except Exception:
+                                pass  # Fallback failed, continue with error
+                    else:
+                        success = False
 
                     if success:
                         # Step 4: Save BibTeX

@@ -59,14 +59,21 @@ libby extract doi --format json    # AI-friendly
 libby fetch 10.1007/s11142-016-9368-9
 libby fetch 10.1007/s11142-016-9368-9 --dry-run  # Show URL only
 libby fetch 10.1007/s11142-016-9368-9 --source unpaywall  # Use specific source
-libby fetch 10.1007/s11142-016-9368-9 --source scihub --free-proxy  # Try proxy rotation
+libby fetch 10.1007/s11142-016-9368-9 --source scihub  # Sci-hub only
 ```
 
 Sources cascade order: Crossref OA → Unpaywall → Semantic Scholar → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
 
+**Sci-hub Fallback**: When Sci-hub aiohttp request fails (blocked/CAPTCHA), automatically falls back to Selenium WebDriver (requires Chrome browser). If PDF URL download fails from other sources, also retries with Sci-hub Selenium.
+
 Output:
 - `~/.lib/papers/{citekey}/{citekey}.pdf`
 - `~/.lib/papers/{citekey}/{citekey}.bib`
+
+### Requirements for Sci-hub Selenium
+
+- Chrome browser installed
+- ChromeDriver (auto-managed by Selenium)
 
 ## Configuration
 
