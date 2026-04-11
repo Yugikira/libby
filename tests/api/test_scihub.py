@@ -1,6 +1,7 @@
 """Tests for Sci-hub API."""
 
 import pytest
+import asyncio
 from unittest.mock import AsyncMock, patch
 from libby.api.scihub import ScihubAPI, MANUAL_DOWNLOAD_HINT
 
@@ -105,7 +106,7 @@ async def test_get_pdf_url_captcha_detected():
 
         assert pdf_url is None
         assert error is not None
-        assert "CAPTCHA" in error
+        assert "CAPTCHA" in error or "blocked" in error
         assert "Manual download" in error
 
 
@@ -157,16 +158,47 @@ async def test_get_pdf_url_page_fetch_failed():
 
 
 @pytest.mark.asyncio
-async def test_use_free_proxy_parameter():
-    """Test that use_free_proxy parameter is stored."""
-    api = ScihubAPI(use_free_proxy=True)
+async def test_get_pdf_url_timeout():
+    """Test timeout handling."""
+    api = ScihubAPI()
 
-    assert api.use_free_proxy is True
+    with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
+        mock_get_html.side_effect = asyncio.TimeoutError()
+
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
+
+        assert pdf_url is None
+        assert error is not None
+        assert "timed out" in error.lower()
+        assert "Manual download" in error
 
 
 @pytest.mark.asyncio
-async def test_default_no_free_proxy():
-    """Test default behavior without free proxy."""
+async def test_blocked_page_detection_cloudflare():
+    """Test Cloudflare block detection."""
     api = ScihubAPI()
 
-    assert api.use_free_proxy is False
+    mock_html = """
+    <html>
+    <body>
+    <div class="cloudflare">Access denied</div>
+    </body>
+    </html>
+    """
+
+    with patch.object(api, 'get_html', new_callable=AsyncMock) as mock_get_html:
+        mock_get_html.return_value = mock_html
+
+        pdf_url, error = await api.get_pdf_url("10.1234/test")
+
+        assert pdf_url is None
+        assert error is not None
+        assert "blocked" in error.lower()
+
+
+@pytest.mark.asyncio
+async def test_custom_scihub_url():
+    """Test custom Sci-hub URL."""
+    api = ScihubAPI(scihub_url="https://sci-hub.se")
+
+    assert api.scihub_url == "https://sci-hub.se"

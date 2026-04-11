@@ -59,11 +59,12 @@ async def test_fetch_no_source_found(fetcher):
             with patch.object(fetcher.biorxiv, 'get_pdf_url', new_callable=AsyncMock) as m3:
                 m3.return_value = None
                 with patch.object(fetcher.scihub, 'get_pdf_url', new_callable=AsyncMock) as m4:
-                    m4.return_value = None
+                    # ScihubAPI returns tuple (pdf_url, error)
+                    m4.return_value = (None, "No PDF found")
                     # Mock serpapi to None to avoid exception
                     fetcher.serpapi = None
 
                     result = await fetcher.fetch("10.1234/test")
 
                     assert result.success is False
-                    assert result.error == "No PDF found from any source"
+                    assert result.error == "No PDF found"

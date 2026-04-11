@@ -31,16 +31,15 @@ class PDFFetcher:
         "serpapi",
     ]
 
-    def __init__(self, config: LibbyConfig, use_free_proxy: bool = False):
+    def __init__(self, config: LibbyConfig):
         self.config = config
-        self.use_free_proxy = use_free_proxy
 
         # Initialize API clients
         self.crossref = CrossrefAPI()
         self.unpaywall = UnpaywallAPI() if os.getenv("EMAIL") else None
         self.s2 = SemanticScholarAPI(api_key=os.getenv("S2_API_KEY"))
         self.biorxiv = BiorxivAPI()
-        self.scihub = ScihubAPI(config.scihub_url, use_free_proxy=use_free_proxy)
+        self.scihub = ScihubAPI(config.scihub_url)
         self.serpapi = SerpapiAPI() if os.getenv("SERPAPI_API_KEY") else None
 
         # Stateless URL builders
