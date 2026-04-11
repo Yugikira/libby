@@ -43,6 +43,8 @@ class AsyncAPIClient:
                 await asyncio.sleep(5)
                 async with session.get(url, **kwargs) as retry_resp:
                     return await retry_resp.json()
+            if resp.status == 404:
+                return {"status": "not_found"}
             return await resp.json()
 
     async def close(self):
