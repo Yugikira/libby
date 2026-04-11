@@ -1,7 +1,9 @@
 """libby extract command."""
 
 import asyncio
+import os
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -9,11 +11,14 @@ from rich.console import Console
 from libby.config.loader import load_config
 from libby.config.env_check import check_env_vars
 from libby.core.metadata import MetadataExtractor
+from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
 from libby.utils.file_ops import FileHandler
+from libby.utils.doi_parser import is_doi
 from libby.cli.utils import read_stdin_lines, process_batch, save_failed_tasks
 from libby.output.bibtex import BibTeXFormatter
 from libby.output.json import JSONFormatter
 from libby.models.metadata import BibTeXMetadata
+from libby.models.fetch_result import FetchResult
 
 console = Console()
 
@@ -24,16 +29,21 @@ def run_async(coro):
 
 
 def extract(
-    input: str = typer.Argument(None, help="DOI, title, or PDF path"),
-    batch_dir: Path = typer.Option(None, "--batch-dir", "-b", help="Directory of PDFs to process"),
-    output: Path = typer.Option(None, "--output", "-o", help="Output file path"),
+    input: Optional[str] = typer.Argument(None, help="DOI, title, or PDF path"),
+    batch_dir: Optional[Path] = typer.Option(None, "--batch-dir", "-b", help="Directory of PDFs to process"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
     format: str = typer.Option("bibtex", "--format", "-f", help="Output format: bibtex, json"),
     copy: bool = typer.Option(False, "--copy", "-c", help="Copy PDF instead of moving"),
     ai_extract: bool = typer.Option(False, "--ai-extract", "-a", help="Use AI to extract DOI/title"),
-    config_path: Path = typer.Option(None, "--config", help="Config file path"),
+    fetch: bool = typer.Option(False, "--fetch", help="Also download PDF for DOI inputs"),
+    no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub when fetching"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
     no_env_check: bool = typer.Option(False, "--no-env-check", help="Skip environment variable check"),
 ):
-    """Extract metadata and organize PDF files."""
+    """Extract metadata and organize PDF files.
+
+    With --fetch flag, also download PDF for DOI inputs.
+    """
     # Environment check
     if not no_env_check:
         check_env_vars()
@@ -66,7 +76,77 @@ def extract(
         console.print("[red]No input provided. Use --help for usage.[/red]")
         raise typer.Exit(1)
 
-    # Process batch
+    # Handle single DOI with --fetch
+    if fetch and len(inputs) == 1 and is_doi(inputs[0]):
+        doi = inputs[0]
+        console.print(f"[green]Fetching PDF for DOI: {doi}[/green]")
+
+        async def run_fetch_single():
+            from rich.prompt import Confirm
+
+            extractor = MetadataExtractor(config)
+            fetcher = PDFFetcher(config)
+
+            try:
+                # Extract metadata first
+                metadata = await extractor.extract_from_doi(doi)
+
+                # Fetch PDF
+                result = await fetcher.fetch(doi)
+
+                if result.success:
+                    # Download
+                    target_dir = config.papers_dir / metadata.citekey
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    target_pdf = target_dir / f"{metadata.citekey}.pdf"
+
+                    success = await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
+
+                    if success:
+                        # Save BibTeX
+                        target_bib = target_dir / f"{metadata.citekey}.bib"
+                        target_bib.write_text(BibTeXFormatter().format(metadata))
+                        console.print(f"[green]PDF saved to: {target_pdf}[/green]")
+                        console.print(f"[green]BibTeX saved to: {target_bib}[/green]")
+
+                        # Output metadata
+                        if output:
+                            output.write_text(BibTeXFormatter().format(metadata))
+                            console.print(f"[green]Output saved to {output}[/green]")
+                        else:
+                            console.print(BibTeXFormatter().format(metadata))
+                    else:
+                        console.print(f"[yellow]PDF download failed, but metadata extracted[/yellow]")
+                        console.print(BibTeXFormatter().format(metadata))
+                else:
+                    console.print(f"[yellow]PDF not found: {result.error}[/yellow]")
+                    console.print(f"[green]Metadata extracted anyway:[/green]")
+                    console.print(BibTeXFormatter().format(metadata))
+
+            except SerpapiConfirmationNeeded as e:
+                if no_scihub:
+                    console.print("[yellow]All sources failed, Sci-hub disabled by --no-scihub[/yellow]")
+                elif os.getenv("SERPAPI_API_KEY"):
+                    console.print(SerpapiConfirmationNeeded(e.doi).message)
+                    if Confirm.ask("Use Serpapi?"):
+                        fetcher.serpapi = None
+                        result = await fetcher.fetch(doi)
+                        if result.success:
+                            target_dir = config.papers_dir / metadata.citekey
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            target_pdf = target_dir / f"{metadata.citekey}.pdf"
+                            await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
+                else:
+                    console.print("[yellow]All sources failed, no Serpapi key available[/yellow]")
+
+            finally:
+                await extractor.close()
+                await fetcher.close()
+
+        run_async(run_fetch_single())
+        return
+
+    # Process batch (normal workflow)
     console.print(f"[green]Processing {len(inputs)} input(s)...[/green]")
 
     async def run_extraction():
