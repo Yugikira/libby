@@ -37,6 +37,10 @@ def websearch(
     author: Optional[str] = typer.Option(None, "--author", "-a", help="Author name filter"),
     venue: Optional[str] = typer.Option(None, "--venue", help="Journal/conference filter"),
     issn: Optional[str] = typer.Option(None, "--issn", help="ISSN filter"),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s",
+        help="Use specific source only (crossref, semantic_scholar, scholarly, serpapi)"
+    ),
     no_serpapi: bool = typer.Option(False, "--no-serpapi", help="Skip Serpapi search"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
     no_env_check: bool = typer.Option(False, "--no-env-check", help="Skip environment check"),
@@ -55,6 +59,8 @@ def websearch(
         libby websearch 10.1234/test
         libby websearch "AI" --year-from 2020 --author Smith --venue Nature
         libby websearch "corporate site visit" --format json --output results.json
+        libby websearch "deep learning" --source crossref
+        libby websearch "neural networks" --source semantic_scholar
     """
     # Environment check
     if not no_env_check:
@@ -88,11 +94,14 @@ def websearch(
     async def run_search():
         searcher = WebSearcher(config)
         try:
+            # Convert source string to list
+            sources_list = [source] if source else None
             results = await searcher.search(
                 query,
                 filter=search_filter,
                 limit=limit,
                 skip_serpapi=no_serpapi,
+                sources=sources_list,
             )
             return results
         finally:

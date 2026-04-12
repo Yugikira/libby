@@ -646,3 +646,58 @@ async def test_resolve_journal_filter_both_match(config):
         assert resolved._resolution_verified is True
 
     await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_search_with_single_source_crossref(config, mock_crossref_results):
+    """Test search with single source (crossref only)."""
+    searcher = WebSearcher(config)
+
+    with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
+        mock_cr.return_value = mock_crossref_results
+
+        results = await searcher.search("test query", sources=["crossref"])
+
+        # Only crossref should be used
+        assert results.sources_used == ["crossref"]
+        assert len(results.results) == len(mock_crossref_results)
+
+    await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_search_with_single_source_semantic_scholar(config, mock_s2_results):
+    """Test search with single source (semantic_scholar only)."""
+    searcher = WebSearcher(config)
+
+    with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
+        mock_s2.return_value = mock_s2_results
+
+        results = await searcher.search("test query", sources=["semantic_scholar"])
+
+        # Only semantic_scholar should be used
+        assert results.sources_used == ["semantic_scholar"]
+
+    await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_search_with_invalid_source(config):
+    """Test search with invalid source name (should be ignored)."""
+    searcher = WebSearcher(config)
+
+    with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
+        with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
+            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
+                mock_cr.return_value = []
+                mock_s2.return_value = []
+                mock_sch.return_value = []
+
+                # Invalid source should be ignored, no sources used
+                results = await searcher.search("test query", sources=["invalid_source"])
+
+                # No valid sources, so no results
+                assert len(results.sources_used) == 0
+                assert len(results.results) == 0
+
+    await searcher.close()

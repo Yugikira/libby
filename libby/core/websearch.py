@@ -46,6 +46,7 @@ class WebSearcher:
         filter: SearchFilter | None = None,
         limit: int = 50,
         skip_serpapi: bool = False,
+        sources: list[str] | None = None,
     ) -> SearchResults:
         """Execute parallel search across multiple sources.
 
@@ -54,10 +55,33 @@ class WebSearcher:
             filter: Unified SearchFilter
             limit: Result count per source
             skip_serpapi: Skip Serpapi search (free sources only)
+            sources: List of specific sources to use (crossref, semantic_scholar, scholarly, serpapi)
+                     If None, uses all free sources (crossref, semantic_scholar, scholarly)
 
         Returns:
             SearchResults with merged results and serpapi_extra
         """
+        # Valid source names
+        VALID_SOURCES = {"crossref", "semantic_scholar", "scholarly", "serpapi"}
+
+        # Determine which sources to use
+        if sources:
+            # Validate source names
+            invalid = set(sources) - VALID_SOURCES
+            if invalid:
+                logger.warning(f"Invalid sources ignored: {invalid}")
+            sources = [s for s in sources if s in VALID_SOURCES]
+            use_crossref = "crossref" in sources
+            use_s2 = "semantic_scholar" in sources
+            use_scholarly = "scholarly" in sources
+            use_serpapi = "serpapi" in sources
+        else:
+            # Default: all free sources, serpapi needs explicit enable
+            use_crossref = True
+            use_s2 = True
+            use_scholarly = True
+            use_serpapi = not skip_serpapi and self.serpapi is not None
+
         sources_used = []
         all_results: list[SearchResult] = []
         serpapi_extra: list[SerpapiExtraInfo] = []
@@ -66,53 +90,55 @@ class WebSearcher:
         if filter is None:
             filter = SearchFilter()
 
-        # 1. Journal resolution (venue ↔ ISSN)
-        if filter.venue or filter.issn:
+        # 1. Journal resolution (venue ↔ ISSN) - only if using Crossref
+        if use_crossref and (filter.venue or filter.issn):
             filter = await self._resolve_journal_filter(filter)
 
-        # 2. Parallel execution: Crossref + S2 + Scholarly
+        # 2. Parallel execution: selected free sources
+        parallel_tasks = []
+        parallel_names = []
+
+        if use_crossref:
+            parallel_tasks.append(self.crossref.search(query, rows=limit, filter=filter))
+            parallel_names.append("crossref")
+
+        if use_s2:
+            parallel_tasks.append(self.s2.search(query, limit=limit, filter=filter))
+            parallel_names.append("semantic_scholar")
+
+        if use_scholarly:
+            parallel_tasks.append(self.scholarly.search(query, limit=limit, filter=filter))
+            parallel_names.append("scholarly")
+
         parallel_results = await asyncio.gather(
-            self.crossref.search(query, rows=limit, filter=filter),
-            self.s2.search(query, limit=limit, filter=filter),
-            self.scholarly.search(query, limit=limit, filter=filter),
+            *parallel_tasks,
             return_exceptions=True,  # Handle errors gracefully
         )
 
-        # Process Crossref results
+        # Process parallel results dynamically
         crossref_results: list[SearchResult] = []
-        if not isinstance(parallel_results[0], Exception):
-            crossref_raw = parallel_results[0]
-            for item in crossref_raw:
-                result = self._parse_crossref(item)
-                crossref_results.append(result)
-            if crossref_raw:
-                sources_used.append("crossref")
-        else:
-            logger.warning(f"Crossref search failed: {parallel_results[0]}")
-
-        # Process Semantic Scholar results
         s2_results: list[SearchResult] = []
-        if not isinstance(parallel_results[1], Exception):
-            s2_raw = parallel_results[1]
-            for item in s2_raw:
-                result = self._parse_s2(item)
-                s2_results.append(result)
-            if s2_raw:
-                sources_used.append("semantic_scholar")
-        else:
-            logger.warning(f"Semantic Scholar search failed: {parallel_results[1]}")
-
-        # Process Scholarly results
         scholarly_results: list[SearchResult] = []
-        if not isinstance(parallel_results[2], Exception):
-            scholarly_raw = parallel_results[2]
-            for item in scholarly_raw:
-                result = self._parse_scholarly(item)
-                scholarly_results.append(result)
-            if scholarly_raw:
-                sources_used.append("scholarly")
-        else:
-            logger.warning(f"Scholarly search failed: {parallel_results[2]}")
+
+        for i, (name, result) in enumerate(zip(parallel_names, parallel_results)):
+            if isinstance(result, Exception):
+                logger.warning(f"{name} search failed: {result}")
+                continue
+
+            if not result:
+                continue
+
+            sources_used.append(name)
+
+            if name == "crossref":
+                for item in result:
+                    crossref_results.append(self._parse_crossref(item))
+            elif name == "semantic_scholar":
+                for item in result:
+                    s2_results.append(self._parse_s2(item))
+            elif name == "scholarly":
+                for item in result:
+                    scholarly_results.append(self._parse_scholarly(item))
 
         # 3. Author filtering (post-filter for Crossref and S2)
         if filter.author:
@@ -127,7 +153,7 @@ class WebSearcher:
         merged_results = self._merge_by_doi(all_results)
 
         # 5. Serpapi separately (controlled usage)
-        if not skip_serpapi and self.serpapi:
+        if use_serpapi and self.serpapi:
             api_key = os.getenv("SERPAPI_API_KEY")
             if api_key:
                 try:
