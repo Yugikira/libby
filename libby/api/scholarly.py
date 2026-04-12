@@ -1,10 +1,13 @@
 """Google Scholar search wrapper using scholarly package."""
 
 import asyncio
+import logging
 from typing import Optional
 
 from scholarly import scholarly
 from libby.models.search_filter import SearchFilter
+
+logger = logging.getLogger(__name__)
 
 
 class ScholarlyAPI:
@@ -56,13 +59,14 @@ class ScholarlyAPI:
                     if i >= limit:
                         break
                     results.append(result)
-            except Exception:
+            except Exception as e:
                 # Handle anti-bot or network errors gracefully
+                logger.warning(f"Scholarly search failed: {e}")
                 pass
             return results
 
         # Run in thread pool (scholarly is sync)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _sync_search)
 
     async def close(self):
