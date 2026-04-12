@@ -5,6 +5,7 @@ from typing import Optional
 
 from libby.api.base import AsyncAPIClient, RateLimit
 from libby.models.metadata import BibTeXMetadata
+from libby.models.search_filter import SearchFilter
 
 
 class CrossrefAPI(AsyncAPIClient):
@@ -47,6 +48,64 @@ class CrossrefAPI(AsyncAPIClient):
             "query.bibliographic": title,
             "rows": min(rows, 10),
         }
+        if self.mailto:
+            params["mailto"] = self.mailto
+
+        data = await self.get(url, params=params)
+        if data.get("status") == "ok":
+            items = data.get("message", {}).get("items", [])
+            return items
+        return []
+
+    async def search(
+        self,
+        query: str,
+        rows: int = 50,
+        filter: SearchFilter | None = None,
+    ) -> list[dict]:
+        """Search papers, convert SearchFilter to Crossref native params.
+
+        Crossref filter syntax:
+            from-pub-date:{year}
+            until-pub-date:{year}
+            issn:{issn}
+
+        Args:
+            query: Search keywords
+            rows: Result count (default 50)
+            filter: Unified SearchFilter
+
+        Returns:
+            Raw result list from Crossref
+        """
+        # Use default filter if none provided
+        if filter is None:
+            filter = SearchFilter()
+
+        # Build Crossref filter string
+        filter_parts = []
+
+        if filter.year_from:
+            filter_parts.append(f"from-pub-date:{filter.year_from}")
+        if filter.year_to:
+            filter_parts.append(f"until-pub-date:{filter.year_to}")
+        if filter.issn:
+            filter_parts.append(f"issn:{filter.issn}")
+
+        # Add native params
+        for key, value in filter.native_params.items():
+            filter_parts.append(f"{key}:{value}")
+
+        # Build request params
+        url = f"{self.BASE_URL}/works"
+        params = {
+            "query.bibliographic": query,
+            "rows": rows,
+        }
+
+        if filter_parts:
+            params["filter"] = ",".join(filter_parts)
+
         if self.mailto:
             params["mailto"] = self.mailto
 
