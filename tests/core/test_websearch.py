@@ -209,7 +209,7 @@ async def test_serpapi_quota_reached(config, mock_crossref_results, mock_s2_resu
 async def test_serpapi_disabled_when_no_key(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
     """Test that Serpapi is skipped when no API key."""
     # Remove SERPAPI_API_KEY from environment
-    with patch.dict(os.environ, {"SERPAPI_API_KEY": ""}, clear=True):
+    with patch.dict(os.environ, {"SERPAPI_API_KEY": ""}, clear=False):
         searcher = WebSearcher(config)
         assert searcher.serpapi is None
 
@@ -232,8 +232,6 @@ async def test_serpapi_disabled_when_no_key(config, mock_crossref_results, mock_
 @pytest.mark.asyncio
 async def test_serpapi_creates_extra_info(config, mock_crossref_results, mock_s2_results, mock_scholarly_results, mock_serpapi_results):
     """Test Serpapi creates SerpapiExtraInfo for each result."""
-    searcher = WebSearcher(config)
-
     with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}):
         searcher = WebSearcher(config)
 

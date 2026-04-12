@@ -224,7 +224,8 @@ class WebSearcher:
                 authors.append(name)
 
         # Venue or journal
-        journal = item.get("venue") or item.get("journal")
+        venue = item.get("venue")
+        journal = venue if venue else item.get("journal")
 
         return SearchResult(
             doi=doi,
