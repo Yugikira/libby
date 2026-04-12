@@ -73,6 +73,41 @@ Output:
 - `~/.lib/papers/{citekey}/{citekey}.pdf`
 - `~/.lib/papers/{citekey}/{citekey}.bib`
 
+### Web Search for Papers
+
+Search across multiple academic databases in parallel:
+
+```bash
+libby websearch "machine learning"                  # Basic search
+libby websearch "AI" --year-from 2023 --year-to 2025 # Year range
+libby websearch "nature" --venue Nature              # Journal filter
+libby websearch "10.1234/test"                       # DOI -> fetch fallback
+libby websearch "quantum" --format json              # JSON output
+libby websearch "physics" -o results.bib             # Save to file
+libby websearch "biology" --no-serpapi               # Skip Serpapi
+```
+
+**Sources searched in parallel:**
+- Crossref (bibliographic metadata)
+- Semantic Scholar (AI paper database)
+- Google Scholar (via scholarly package)
+- Serpapi Google Scholar (optional, controlled usage)
+
+**Default filters:**
+- Year: current year - 2 (recent papers only)
+- Results: 50 per source, merged by DOI
+- Longer values kept when merging (title, abstract)
+
+**Serpapi behavior:**
+- Max 5 pages per search (50 results)
+- Separate `_serpapi.json` output file
+- Skip with `--no-serpapi` to save quota
+
+**DOI fallback:**
+If you provide a DOI instead of keywords, libby will:
+1. Try to fetch the PDF
+2. If fetch fails, extract metadata only
+
 ### Requirements for Sci-hub Selenium
 
 - Chrome browser installed

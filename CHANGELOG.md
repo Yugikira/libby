@@ -2,6 +2,34 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.4.0] - 2026-04-12
+
+### Added
+- **`libby websearch` command** for multi-source academic database search
+  - Parallel search across Crossref, Semantic Scholar, Google Scholar
+  - Serpapi Google Scholar (controlled, 5 pages max)
+  - Unified SearchFilter with year_from, year_to, venue, issn options
+  - DOI-based result merging (keep longer values, fill missing fields)
+  - Output formats: BibTeX (default), JSON
+  - DOI input triggers fetch -> extract fallback workflow
+  - Serpapi extra file output (`{output}_serpapi.json`)
+  - Rich table display for results
+
+### Models
+- `SearchFilter`: Unified filter model with year_from (default: current - 2), year_to, venue, issn
+- `SearchResult`: Single result with DOI merging via `merge_from()` method
+- `SearchResults`: Batch results with `to_json()` and `to_bibtex()` methods
+- `SerpapiExtraInfo`: Serpapi-specific metadata (link, cited_by_count)
+
+### API Extensions
+- CrossrefAPI.search() - SearchFilter to Crossref native params
+- SemanticScholarAPI.search() - SearchFilter to S2 native params
+- ScholarlyAPI - Google Scholar wrapper via scholarly package
+- SerpapiAPI.search() - Pagination (5 pages) + quota detection
+
+### Dependencies
+- scholarly (for Google Scholar search)
+
 ## [0.3.1] - 2026-04-11
 
 ### Added
