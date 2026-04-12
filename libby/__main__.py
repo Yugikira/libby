@@ -39,6 +39,9 @@ app.command(name="extract")(extract)
 from libby.cli.fetch import fetch
 app.command(name="fetch")(fetch)
 
+from libby.cli.websearch import websearch
+app.command(name="websearch")(websearch)
+
 
 if __name__ == "__main__":
     app()
