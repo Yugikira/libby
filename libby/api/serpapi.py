@@ -81,6 +81,8 @@ class SerpapiAPI(AsyncAPIClient):
     async def _fetch_bibtex_selenium(self, bibtex_url: str) -> Optional[str]:
         """Fetch BibTeX using Selenium WebDriver (fallback for 403).
 
+        Note: headless mode is detected by Google, must use visible browser.
+
         Args:
             bibtex_url: Google Scholar BibTeX URL
 
@@ -96,8 +98,11 @@ class SerpapiAPI(AsyncAPIClient):
             from selenium.common.exceptions import TimeoutException, WebDriverException
 
             chrome_options = Options()
-            chrome_options.add_argument("--headless")
+            # NOTE: headless mode is detected by Google Scholar, causes failure
+            # chrome_options.add_argument("--headless")  # Don't use headless!
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option("useAutomationExtension", False)
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
 
@@ -105,12 +110,12 @@ class SerpapiAPI(AsyncAPIClient):
                 driver = webdriver.Chrome(options=chrome_options)
                 driver.get(bibtex_url)
 
-                # Wait for page to load (BibTeX is plain text)
-                WebDriverWait(driver, 10).until(
+                # Wait for BibTeX text (in <pre> tag)
+                WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.TAG_NAME, "pre"))
                 )
 
-                # Get page source (BibTeX text)
+                # Get BibTeX text
                 bibtex_text = driver.find_element(By.TAG_NAME, "pre").text
                 driver.quit()
                 return bibtex_text
