@@ -1,9 +1,13 @@
 """Serpapi Google Scholar client."""
 
+import asyncio
+import logging
 from typing import Optional
 
 from libby.api.base import AsyncAPIClient, RateLimit
 from libby.models.search_filter import SearchFilter
+
+logger = logging.getLogger(__name__)
 
 
 class SerpapiConfirmationNeeded(Exception):
@@ -29,6 +33,8 @@ class SerpapiAPI(AsyncAPIClient):
 
     async def get_bibtex(self, serpapi_cite_link: str, api_key: str) -> Optional[str]:
         """Fetch BibTeX citation using the cite link from search results.
+
+        Uses aiohttp first, falls back to Selenium if blocked (403).
 
         Args:
             serpapi_cite_link: The serpapi_cite_link from inline_links
@@ -59,13 +65,67 @@ class SerpapiAPI(AsyncAPIClient):
         if not bibtex_url:
             return None
 
-        # Fetch BibTeX content (raw text from Google, not JSON)
+        # Try aiohttp first
         import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(bibtex_url) as resp:
-                if resp.status == 200:
-                    return await resp.text()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(bibtex_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        return await resp.text()
+        except Exception as e:
+            logger.debug(f"aiohttp failed for BibTeX: {e}")
+
+        # Fallback to Selenium (handles 403 from Google)
+        return await self._fetch_bibtex_selenium(bibtex_url)
+
+    async def _fetch_bibtex_selenium(self, bibtex_url: str) -> Optional[str]:
+        """Fetch BibTeX using Selenium WebDriver (fallback for 403).
+
+        Args:
+            bibtex_url: Google Scholar BibTeX URL
+
+        Returns:
+            BibTeX string or None
+        """
+        def _sync_fetch():
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.common.exceptions import TimeoutException, WebDriverException
+
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+
+            try:
+                driver = webdriver.Chrome(options=chrome_options)
+                driver.get(bibtex_url)
+
+                # Wait for page to load (BibTeX is plain text)
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "pre"))
+                )
+
+                # Get page source (BibTeX text)
+                bibtex_text = driver.find_element(By.TAG_NAME, "pre").text
+                driver.quit()
+                return bibtex_text
+
+            except (TimeoutException, WebDriverException) as e:
+                logger.warning(f"Selenium failed for BibTeX: {e}")
+                try:
+                    driver.quit()
+                except:
+                    pass
                 return None
+
+        # Run in thread pool (Selenium is sync)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _sync_fetch)
 
     async def get_pdf_url(self, doi: str, api_key: str) -> str | None:
         """Search Google Scholar for PDF link via Serpapi.

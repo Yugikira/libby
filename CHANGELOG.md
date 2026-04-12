@@ -9,10 +9,12 @@ All notable changes to libby will be documented in this file.
   - Fetch BibTeX via `serpapi_cite_link` from search results
   - Parse BibTeX to get complete fields (journal, volume, number, pages, publisher)
   - Add `parse_bibtex()` function for BibTeX string parsing
+  - Selenium fallback for Google Scholar BibTeX 403 errors
 
 ### Changed
-- `_parse_serpapi()` simplified: only extracts snippet as abstract, full metadata from BibTeX
-- `SerpapiAPI.get_bibtex()` uses existing cite link instead of additional API calls
+- `_parse_serpapi()` extracts basic fields (title, author, year) as fallback
+- `SerpapiAPI.get_bibtex()` uses existing cite link + Selenium fallback
+- `get_pdf_url()` only checks first result (most relevant)
 
 ## [0.4.1] - 2026-04-12
 

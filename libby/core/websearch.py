@@ -340,12 +340,15 @@ class WebSearcher:
         )
 
     def _parse_serpapi(self, item: dict) -> SearchResult:
-        """Parse Serpapi result - only extract snippet as abstract.
+        """Parse Serpapi result - extract basic fields as fallback.
 
-        Full metadata (title, author, journal, etc.) will be fetched from BibTeX.
-        This only extracts:
-        - abstract: item["snippet"] (search result summary)
-        - doi: from link URL if available
+        Full metadata (journal, volume, etc.) will be fetched from BibTeX.
+        If BibTeX fails, these basic fields serve as fallback:
+        - title: item["title"]
+        - abstract: item["snippet"]
+        - authors: publication_info["authors"][*]["name"]
+        - year: from publication_info summary
+        - doi: from link or publication_info
         - url: item["link"]
         """
         pub_info = item.get("publication_info") or {}
@@ -353,11 +356,32 @@ class WebSearcher:
         # DOI from publication_info or link
         doi = pub_info.get("doi") or self._extract_doi_from_serpapi(item)
 
-        # Snippet as abstract (will be kept if BibTeX doesn't have abstract)
+        # Authors from publication_info (fallback if BibTeX fails)
+        authors = []
+        author_list = pub_info.get("authors") or []
+        for author_dict in author_list:
+            name = author_dict.get("name")
+            if name:
+                authors.append(name)
+
+        # Year from publication_info summary (fallback if BibTeX fails)
+        year = None
+        summary = pub_info.get("summary") or ""
+        year_match = re.search(r"(\d{4})", summary)
+        if year_match:
+            try:
+                year = int(year_match.group(1))
+            except ValueError:
+                pass
+
+        # Snippet as abstract
         abstract = item.get("snippet")
 
         return SearchResult(
             doi=doi,
+            title=item.get("title"),
+            author=authors,
+            year=year,
             abstract=abstract,
             url=item.get("link"),
             sources=["serpapi"],

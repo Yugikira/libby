@@ -339,18 +339,18 @@ async def test_parse_scholarly(config):
 
 @pytest.mark.asyncio
 async def test_parse_serpapi(config):
-    """Test Serpapi result parsing - only snippet as abstract."""
+    """Test Serpapi result parsing - basic fields as fallback."""
     searcher = WebSearcher(config)
 
     serpapi_item = {
-        "title": "Serpapi Title",  # Will be ignored, fetched from BibTeX
+        "title": "Serpapi Title",
         "link": "https://example.com/paper",
         "snippet": "This is the abstract from snippet.",
         "publication_info": {
             "doi": "10.1234/serpapi",
             "summary": "2024 - Journal Name",
             "authors": [
-                {"name": "John Smith"},  # Will be ignored, fetched from BibTeX
+                {"name": "John Smith"},
                 {"name": "Jane Doe"},
             ],
         },
@@ -365,14 +365,19 @@ async def test_parse_serpapi(config):
 
     result = searcher._parse_serpapi(serpapi_item)
 
-    # Only abstract, doi, url are extracted (title/author/year from BibTeX)
+    # Basic fields extracted as fallback (if BibTeX fails)
+    assert result.title == "Serpapi Title"
     assert result.abstract == "This is the abstract from snippet."
+    assert result.author == ["John Smith", "Jane Doe"]
+    assert result.year == 2024
     assert result.doi == "10.1234/serpapi"
     assert result.url == "https://example.com/paper"
-    assert result.title is None  # Not extracted, will come from BibTeX
-    assert result.author == []   # Not extracted, will come from BibTeX
-    assert result.year is None   # Not extracted, will come from BibTeX
     assert "serpapi" in result.sources
+
+    # journal/volume/pages not extracted (from BibTeX)
+    assert result.journal is None
+    assert result.volume is None
+    assert result.pages is None
 
     # Test BibTeX link extraction
     bibtex_link = searcher._extract_bibtex_link(serpapi_item)
