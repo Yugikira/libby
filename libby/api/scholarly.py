@@ -28,6 +28,7 @@ class ScholarlyAPI:
         Converts SearchFilter to query keywords:
         - year_from/year_to: "after:{year}", "before:{year}"
         - venue: "source:{venue}"
+        - author: "author:{name}"
 
         Args:
             query: Search keywords
@@ -43,12 +44,19 @@ class ScholarlyAPI:
         # Enhance query with filter keywords
         enhanced_query = query
 
+        # Author: embed in query
+        if filter.author:
+            enhanced_query += f" author:{filter.author}"
+
+        # Venue: use resolved venue if available
+        venue = filter._resolved_venue or filter.venue
+        if venue:
+            enhanced_query += f" source:{venue}"
+
         if filter.year_from:
             enhanced_query += f" after:{filter.year_from}"
         if filter.year_to:
             enhanced_query += f" before:{filter.year_to}"
-        if filter.venue:
-            enhanced_query += f" source:{filter.venue}"
 
         def _sync_search():
             """Sync search in thread."""

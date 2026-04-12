@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+from difflib import SequenceMatcher
 from typing import Optional
 
 from rich.console import Console
@@ -23,10 +24,12 @@ class WebSearcher:
     """Orchestrates parallel search across multiple sources.
 
     Search flow:
-    1. Crossref + Semantic Scholar + Scholarly in parallel (asyncio.gather)
-    2. Serpapi separately (controlled usage, 5 pages)
-    3. Merge results by DOI (keep longer values, fill missing fields)
-    4. Return SearchResults with serpapi_extra info
+    1. Journal resolution (venue ↔ ISSN via Crossref)
+    2. Crossref + Semantic Scholar + Scholarly in parallel (asyncio.gather)
+    3. Author filtering (post-filter for Crossref/S2)
+    4. Serpapi separately (controlled usage, 5 pages)
+    5. Merge results by DOI (keep longer values, fill missing fields)
+    6. Return SearchResults with serpapi_extra info
     """
 
     def __init__(self, config: LibbyConfig):
@@ -59,7 +62,15 @@ class WebSearcher:
         all_results: list[SearchResult] = []
         serpapi_extra: list[SerpapiExtraInfo] = []
 
-        # 1. Parallel execution: Crossref + S2 + Scholarly
+        # Use default filter if none provided
+        if filter is None:
+            filter = SearchFilter()
+
+        # 1. Journal resolution (venue ↔ ISSN)
+        if filter.venue or filter.issn:
+            filter = await self._resolve_journal_filter(filter)
+
+        # 2. Parallel execution: Crossref + S2 + Scholarly
         parallel_results = await asyncio.gather(
             self.crossref.search(query, rows=limit, filter=filter),
             self.s2.search(query, limit=limit, filter=filter),
@@ -68,48 +79,60 @@ class WebSearcher:
         )
 
         # Process Crossref results
+        crossref_results: list[SearchResult] = []
         if not isinstance(parallel_results[0], Exception):
             crossref_raw = parallel_results[0]
             for item in crossref_raw:
                 result = self._parse_crossref(item)
-                all_results.append(result)
+                crossref_results.append(result)
             if crossref_raw:
                 sources_used.append("crossref")
         else:
             logger.warning(f"Crossref search failed: {parallel_results[0]}")
 
         # Process Semantic Scholar results
+        s2_results: list[SearchResult] = []
         if not isinstance(parallel_results[1], Exception):
             s2_raw = parallel_results[1]
             for item in s2_raw:
                 result = self._parse_s2(item)
-                all_results.append(result)
+                s2_results.append(result)
             if s2_raw:
                 sources_used.append("semantic_scholar")
         else:
             logger.warning(f"Semantic Scholar search failed: {parallel_results[1]}")
 
         # Process Scholarly results
+        scholarly_results: list[SearchResult] = []
         if not isinstance(parallel_results[2], Exception):
             scholarly_raw = parallel_results[2]
             for item in scholarly_raw:
                 result = self._parse_scholarly(item)
-                all_results.append(result)
+                scholarly_results.append(result)
             if scholarly_raw:
                 sources_used.append("scholarly")
         else:
             logger.warning(f"Scholarly search failed: {parallel_results[2]}")
 
-        # 2. Merge by DOI
+        # 3. Author filtering (post-filter for Crossref and S2)
+        if filter.author:
+            crossref_results = self._filter_by_author(crossref_results, filter.author)
+            s2_results = self._filter_by_author(s2_results, filter.author)
+            # Scholarly already handled in query
+
+        # Combine all results
+        all_results = crossref_results + s2_results + scholarly_results
+
+        # 4. Merge by DOI
         merged_results = self._merge_by_doi(all_results)
 
-        # 3. Serpapi separately (controlled usage)
+        # 5. Serpapi separately (controlled usage)
         if not skip_serpapi and self.serpapi:
             api_key = os.getenv("SERPAPI_API_KEY")
             if api_key:
                 try:
                     serpapi_raw, quota_reached = await self.serpapi.search(
-                        query, api_key, max_pages=5
+                        query, api_key, max_pages=5, filter=filter
                     )
 
                     if quota_reached:
@@ -151,7 +174,7 @@ class WebSearcher:
                 except Exception as e:
                     logger.warning(f"Serpapi search failed: {e}")
 
-        # 4. Return SearchResults
+        # 6. Return SearchResults
         return SearchResults(
             query=query,
             results=merged_results,
@@ -345,6 +368,160 @@ class WebSearcher:
         # Combine DOI-merged and no-DOI results
         merged = list(doi_map.values()) + no_doi_results
         return merged
+
+    async def _resolve_journal_filter(self, filter: SearchFilter) -> SearchFilter:
+        """Resolve venue ↔ ISSN via Crossref.
+
+        Cases:
+        - venue + issn: Verify they match
+        - venue only: Query Crossref for ISSN (pick highest similarity)
+        - issn only: Query Crossref for journal name
+
+        Args:
+            filter: SearchFilter with venue and/or issn
+
+        Returns:
+            SearchFilter with _resolved_venue and _resolved_issn set
+        """
+        # Case 1: Both venue and issn provided - verify match
+        if filter.venue and filter.issn:
+            journal = await self.crossref.get_journal_by_issn(filter.issn)
+            if journal:
+                journal_title = journal.get("title", "")
+                similarity = self._calculate_similarity(filter.venue, journal_title)
+
+                if similarity < 0.7:  # Threshold for match
+                    self.console.print(
+                        f"[yellow]Warning: venue '{filter.venue}' may not match "
+                        f"ISSN '{filter.issn}' (journal: '{journal_title}')[/yellow]"
+                    )
+                else:
+                    filter._resolved_venue = journal_title
+                    filter._resolved_issn = filter.issn
+                    filter._resolution_verified = True
+            else:
+                self.console.print(
+                    f"[yellow]Warning: ISSN '{filter.issn}' not found in Crossref[/yellow]"
+                )
+            return filter
+
+        # Case 2: Only venue provided - query for ISSN
+        if filter.venue and not filter.issn:
+            journals = await self.crossref.search_journal_by_name(filter.venue)
+            if journals:
+                # Pick highest similarity match
+                best_match = max(
+                    journals,
+                    key=lambda j: self._calculate_similarity(
+                        filter.venue, j.get("title", "")
+                    )
+                )
+                best_title = best_match.get("title", "")
+                issns = best_match.get("ISSN", [])
+                # Prefer print ISSN (has hyphen)
+                issn = next((i for i in issns if "-" in i), issns[0] if issns else None)
+
+                if issn:
+                    filter._resolved_venue = best_title
+                    filter._resolved_issn = issn
+                    self.console.print(
+                        f"[green]Resolved: venue '{filter.venue}' → ISSN '{issn}'[/green]"
+                    )
+                else:
+                    self.console.print(
+                        f"[yellow]Warning: No ISSN found for venue '{filter.venue}'[/yellow]"
+                    )
+            else:
+                self.console.print(
+                    f"[yellow]Warning: Venue '{filter.venue}' not found in Crossref[/yellow]"
+                )
+            return filter
+
+        # Case 3: Only ISSN provided - query for journal name
+        if filter.issn and not filter.venue:
+            journal = await self.crossref.get_journal_by_issn(filter.issn)
+            if journal:
+                journal_title = journal.get("title", "")
+                filter._resolved_venue = journal_title
+                filter._resolved_issn = filter.issn
+                self.console.print(
+                    f"[green]Resolved: ISSN '{filter.issn}' → venue '{journal_title}'[/green]"
+                )
+            else:
+                self.console.print(
+                    f"[yellow]Warning: ISSN '{filter.issn}' not found in Crossref[/yellow]"
+                )
+            return filter
+
+        return filter
+
+    def _calculate_similarity(self, str1: str, str2: str) -> float:
+        """Calculate string similarity using SequenceMatcher.
+
+        Args:
+            str1: First string
+            str2: Second string
+
+        Returns:
+            Similarity ratio (0.0 to 1.0)
+        """
+        # Normalize strings for comparison
+        s1 = str1.lower().strip()
+        s2 = str2.lower().strip()
+        return SequenceMatcher(None, s1, s2).ratio()
+
+    def _filter_by_author(self, results: list[SearchResult], author: str) -> list[SearchResult]:
+        """Filter results by author name (fuzzy match).
+
+        Matching rules:
+        - Case insensitive
+        - Match surname (e.g., "Smith" matches "Smith, John" or "John Smith")
+        - Match full name if provided
+        - Partial match if author name appears in result author
+
+        Args:
+            results: List of SearchResult
+            author: Author name to filter
+
+        Returns:
+            Filtered list of SearchResult
+        """
+        if not author:
+            return results
+
+        author_lower = author.lower().strip()
+        filtered = []
+
+        for result in results:
+            for result_author in result.author:
+                result_author_lower = result_author.lower()
+
+                # Case 1: Exact match
+                if author_lower == result_author_lower:
+                    filtered.append(result)
+                    break
+
+                # Case 2: Surname match ("Smith, John" format)
+                if "," in result_author:
+                    surname = result_author.split(",")[0].strip().lower()
+                    if author_lower == surname:
+                        filtered.append(result)
+                        break
+
+                # Case 3: Surname match ("John Smith" format)
+                parts = result_author.split()
+                if parts:
+                    surname = parts[-1].lower()  # Last word is surname
+                    if author_lower == surname:
+                        filtered.append(result)
+                        break
+
+                # Case 4: Partial match (user input appears in author name)
+                if author_lower in result_author_lower:
+                    filtered.append(result)
+                    break
+
+        return filtered
 
     async def close(self):
         """Close API sessions."""

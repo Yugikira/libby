@@ -503,3 +503,146 @@ async def test_search_results_total_count(config, mock_crossref_results, mock_s2
                 assert results.total_count == len(results.results)
 
     await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_filter_by_author(config):
+    """Test author filtering with different name formats."""
+    searcher = WebSearcher(config)
+
+    results = [
+        SearchResult(doi="10.1", title="Paper 1", author=["Smith, John", "Jones, Alice"]),
+        SearchResult(doi="10.2", title="Paper 2", author=["John Smith", "Bob Brown"]),
+        SearchResult(doi="10.3", title="Paper 3", author=["Williams, Charlie"]),
+        SearchResult(doi="10.4", title="Paper 4", author=[]),
+    ]
+
+    # Test surname match (Smith, John format)
+    filtered = searcher._filter_by_author(results, "Smith")
+    assert len(filtered) == 2  # Smith, John and John Smith both match
+
+    # Test partial match
+    filtered = searcher._filter_by_author(results, "John")
+    assert len(filtered) == 2  # Smith, John and John Smith
+
+    # Test no match
+    filtered = searcher._filter_by_author(results, "Unknown")
+    assert len(filtered) == 0
+
+
+@pytest.mark.asyncio
+async def test_search_with_author_filter(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
+    """Test search with author filter applies post-filtering."""
+    searcher = WebSearcher(config)
+
+    # Add author to mock results
+    mock_cr_with_author = [
+        {
+            "DOI": "10.1234/crossref1",
+            "title": ["Test Paper"],
+            "author": [{"family": "Smith", "given": "John"}],
+            "published-print": {"date-parts": [[2023]]},
+        },
+        {
+            "DOI": "10.1234/crossref2",
+            "title": ["Other Paper"],
+            "author": [{"family": "Jones", "given": "Alice"}],
+            "published-print": {"date-parts": [[2023]]},
+        },
+    ]
+
+    filter_obj = SearchFilter(author="Smith")
+
+    with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
+        with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
+            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
+                mock_cr.return_value = mock_cr_with_author
+                mock_s2.return_value = []
+                mock_sch.return_value = []
+
+                results = await searcher.search("test", filter=filter_obj, skip_serpapi=True)
+
+                # Only Smith paper should be in results
+                assert len(results.results) == 1
+                assert results.results[0].doi == "10.1234/crossref1"
+
+    await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_calculate_similarity(config):
+    """Test string similarity calculation."""
+    searcher = WebSearcher(config)
+
+    # High similarity
+    assert searcher._calculate_similarity("Nature", "Nature") == 1.0
+
+    # Medium similarity
+    sim = searcher._calculate_similarity("Journal of Accounting Research", "Journal of Accounting Res")
+    assert sim > 0.9
+
+    # Low similarity
+    sim = searcher._calculate_similarity("Nature", "Science")
+    assert sim < 0.5
+
+
+@pytest.mark.asyncio
+async def test_resolve_journal_filter_venue_only(config):
+    """Test journal resolution when only venue is provided."""
+    searcher = WebSearcher(config)
+
+    filter_obj = SearchFilter(venue="Nature")
+
+    mock_journal_results = [
+        {"title": "Nature", "ISSN": ["0028-0836", "1476-4687"]},
+    ]
+
+    with patch.object(searcher.crossref, 'search_journal_by_name', new_callable=AsyncMock) as mock_search:
+        mock_search.return_value = mock_journal_results
+
+        resolved = await searcher._resolve_journal_filter(filter_obj)
+
+        assert resolved._resolved_issn == "0028-0836"
+        assert resolved._resolved_venue == "Nature"
+
+    await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_journal_filter_issn_only(config):
+    """Test journal resolution when only ISSN is provided."""
+    searcher = WebSearcher(config)
+
+    filter_obj = SearchFilter(issn="0028-0836")
+
+    mock_journal = {"title": "Nature", "ISSN": ["0028-0836", "1476-4687"]}
+
+    with patch.object(searcher.crossref, 'get_journal_by_issn', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_journal
+
+        resolved = await searcher._resolve_journal_filter(filter_obj)
+
+        assert resolved._resolved_venue == "Nature"
+        assert resolved._resolved_issn == "0028-0836"
+
+    await searcher.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_journal_filter_both_match(config):
+    """Test journal resolution when venue and ISSN both provided and match."""
+    searcher = WebSearcher(config)
+
+    filter_obj = SearchFilter(venue="Nature", issn="0028-0836")
+
+    mock_journal = {"title": "Nature", "ISSN": ["0028-0836", "1476-4687"]}
+
+    with patch.object(searcher.crossref, 'get_journal_by_issn', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_journal
+
+        resolved = await searcher._resolve_journal_filter(filter_obj)
+
+        # High similarity, should be verified
+        assert resolved._resolution_verified is True
+
+    await searcher.close()

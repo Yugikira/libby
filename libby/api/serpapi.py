@@ -1,6 +1,7 @@
 """Serpapi Google Scholar client."""
 
 from libby.api.base import AsyncAPIClient, RateLimit
+from libby.models.search_filter import SearchFilter
 
 
 class SerpapiConfirmationNeeded(Exception):
@@ -64,6 +65,7 @@ class SerpapiAPI(AsyncAPIClient):
         query: str,
         api_key: str,
         max_pages: int = 5,
+        filter: SearchFilter | None = None,
     ) -> tuple[list[dict], bool]:
         """Search Google Scholar via Serpapi.
 
@@ -71,10 +73,16 @@ class SerpapiAPI(AsyncAPIClient):
         - Max 5 pages per search (50 results)
         - Retry on failure (max 2 per page)
 
+        Filter support:
+        - author: Added as "author:{name}" in query
+        - venue: Added as "source:{venue}" in query
+        - year_from/year_to: Use as_ylo/as_yhi parameters
+
         Args:
             query: Search keywords
             api_key: Serpapi API key
             max_pages: Max pages to fetch
+            filter: SearchFilter for author, venue, year filtering
 
         Returns:
             (results, quota_reached)
@@ -83,14 +91,32 @@ class SerpapiAPI(AsyncAPIClient):
         all_results: list[dict] = []
         quota_reached = False
 
+        # Build enhanced query with author and venue
+        enhanced_query = query
+        if filter:
+            # Author: embed in query
+            if filter.author:
+                enhanced_query += f" author:{filter.author}"
+            # Venue: use resolved venue if available
+            venue = filter._resolved_venue or filter.venue
+            if venue:
+                enhanced_query += f" source:{venue}"
+
         for page in range(max_pages):
             params = {
                 "engine": "google_scholar",
-                "q": query,
+                "q": enhanced_query,
                 "api_key": api_key,
                 "num": 10,
                 "start": page * 10,
             }
+
+            # Year range: use dedicated parameters
+            if filter:
+                if filter.year_from:
+                    params["as_ylo"] = filter.year_from
+                if filter.year_to:
+                    params["as_yhi"] = filter.year_to
 
             # Retry up to 2 times per page
             for attempt in range(2):

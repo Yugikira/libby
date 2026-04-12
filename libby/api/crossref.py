@@ -175,3 +175,48 @@ class CrossrefAPI(AsyncAPIClient):
                     return pdf_url, meta
 
         return None, {}
+
+    async def get_journal_by_issn(self, issn: str) -> Optional[dict]:
+        """Get journal metadata by ISSN.
+
+        Args:
+            issn: ISSN (e.g., "0028-0836")
+
+        Returns:
+            Journal metadata dict with title, ISSN, publisher, etc.
+            None if not found.
+        """
+        url = f"{self.BASE_URL}/journals/{issn}"
+        params = {}
+        if self.mailto:
+            params["mailto"] = self.mailto
+
+        data = await self.get(url, params=params)
+        if data.get("status") == "ok":
+            return data.get("message")
+        return None
+
+    async def search_journal_by_name(self, name: str, rows: int = 5) -> list[dict]:
+        """Search journals by name.
+
+        Args:
+            name: Journal name to search
+            rows: Number of results (default 5)
+
+        Returns:
+            List of journal metadata dicts, sorted by relevance.
+            Each dict contains: title, ISSN, publisher, scores.
+        """
+        url = f"{self.BASE_URL}/journals"
+        params = {
+            "query": name,
+            "rows": rows,
+        }
+        if self.mailto:
+            params["mailto"] = self.mailto
+
+        data = await self.get(url, params=params)
+        if data.get("status") == "ok":
+            items = data.get("message", {}).get("items", [])
+            return items
+        return []
