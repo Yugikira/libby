@@ -58,3 +58,65 @@ class SerpapiAPI(AsyncAPIClient):
                     return res.get("link")
 
         return None
+
+    async def search(
+        self,
+        query: str,
+        api_key: str,
+        max_pages: int = 5,
+    ) -> tuple[list[dict], bool]:
+        """Search Google Scholar via Serpapi.
+
+        Controlled API usage:
+        - Max 5 pages per search (50 results)
+        - Retry on failure (max 2 per page)
+
+        Args:
+            query: Search keywords
+            api_key: Serpapi API key
+            max_pages: Max pages to fetch
+
+        Returns:
+            (results, quota_reached)
+            quota_reached=True means skip Serpapi
+        """
+        all_results: list[dict] = []
+        quota_reached = False
+
+        for page in range(max_pages):
+            params = {
+                "engine": "google_scholar",
+                "q": query,
+                "api_key": api_key,
+                "num": 10,
+                "start": page * 10,
+            }
+
+            # Retry up to 2 times per page
+            for attempt in range(2):
+                try:
+                    data = await self.get(self.BASE_URL, params=params)
+
+                    # Check for quota errors
+                    if data and "error" in data:
+                        error_msg = data["error"].lower()
+                        if "quota" in error_msg or "invalid api key" in error_msg:
+                            return all_results, True
+
+                    # No data or other error, continue to next page
+                    if not data:
+                        break
+
+                    # Extract organic results
+                    organic_results = data.get("organic_results", [])
+                    all_results.extend(organic_results)
+                    break
+
+                except Exception:
+                    # On exception, retry if attempts remaining
+                    if attempt == 1:
+                        # Max retries reached, continue to next page
+                        break
+                    continue
+
+        return all_results, quota_reached
