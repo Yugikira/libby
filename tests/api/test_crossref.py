@@ -72,8 +72,8 @@ async def test_search_with_filter():
         },
     }
 
-    with pytest.MonkeyPatch.context() as m:
-        client.get = AsyncMock(return_value=mock_response)
+    with patch.object(client, 'get', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_response
 
         filter_obj = SearchFilter(year_from=2020, year_to=2024)
         results = await client.search("machine learning", rows=20, filter=filter_obj)
@@ -83,7 +83,7 @@ async def test_search_with_filter():
         assert results[0]["DOI"] == "10.1234/test1"
 
         # Verify filter params were correctly formatted
-        call_args = client.get.call_args
+        call_args = mock_get.call_args
         params = call_args.kwargs.get("params", call_args[1].get("params", {}))
         filter_param = params.get("filter", "")
 
@@ -109,8 +109,8 @@ async def test_search_with_issn():
         },
     }
 
-    with pytest.MonkeyPatch.context() as m:
-        client.get = AsyncMock(return_value=mock_response)
+    with patch.object(client, 'get', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_response
 
         filter_obj = SearchFilter(issn="0028-0836", year_from=2022)
         results = await client.search("climate change", rows=10, filter=filter_obj)
@@ -120,7 +120,7 @@ async def test_search_with_issn():
         assert results[0]["DOI"] == "10.1234/nature1"
 
         # Verify filter params were correctly formatted
-        call_args = client.get.call_args
+        call_args = mock_get.call_args
         params = call_args.kwargs.get("params", call_args[1].get("params", {}))
         filter_param = params.get("filter", "")
 
@@ -142,14 +142,14 @@ async def test_search_default_filter():
         "message": {"items": []},
     }
 
-    with pytest.MonkeyPatch.context() as m:
-        client.get = AsyncMock(return_value=mock_response)
+    with patch.object(client, 'get', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_response
 
         # No filter provided - should use default SearchFilter
         results = await client.search("test query")
 
         # Verify filter params were set with default year_from
-        call_args = client.get.call_args
+        call_args = mock_get.call_args
         params = call_args.kwargs.get("params", call_args[1].get("params", {}))
         filter_param = params.get("filter", "")
 
@@ -172,8 +172,8 @@ async def test_search_with_native_params():
         "message": {"items": []},
     }
 
-    with pytest.MonkeyPatch.context() as m:
-        client.get = AsyncMock(return_value=mock_response)
+    with patch.object(client, 'get', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_response
 
         filter_obj = SearchFilter(
             year_from=2023, native_params={"type": "journal-article"}
@@ -181,11 +181,26 @@ async def test_search_with_native_params():
         results = await client.search("test", filter=filter_obj)
 
         # Verify filter params include native params
-        call_args = client.get.call_args
+        call_args = mock_get.call_args
         params = call_args.kwargs.get("params", call_args[1].get("params", {}))
         filter_param = params.get("filter", "")
 
         assert "from-pub-date:2023" in filter_param
         assert "type:journal-article" in filter_param
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_search_error_response():
+    """Test when API returns error status."""
+    client = CrossrefAPI()
+
+    with patch.object(client, 'get', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"status": "error"}
+
+        results = await client.search("test query")
+
+        assert results == []
 
     await client.close()
