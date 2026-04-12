@@ -10,11 +10,13 @@ All notable changes to libby will be documented in this file.
   - Parse BibTeX to get complete fields (journal, volume, number, pages, publisher)
   - Add `parse_bibtex()` function for BibTeX string parsing
   - Selenium fallback for Google Scholar BibTeX 403 errors
+  - Configurable parallel workers: `serpapi.max_bibtex_workers` (default: 5, max: 20)
 
 ### Changed
 - `_parse_serpapi()` extracts basic fields (title, author, year) as fallback
-- `SerpapiAPI.get_bibtex()` uses existing cite link + Selenium fallback
+- `SerpapiAPI.get_bibtex()` uses visible Chrome (headless detected by Google)
 - `get_pdf_url()` only checks first result (most relevant)
+- `_fetch_serpapi_bibtex()` uses Semaphore for limited parallelism
 
 ## [0.4.1] - 2026-04-12
 

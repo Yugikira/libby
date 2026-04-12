@@ -29,6 +29,15 @@ class RetryConfig(BaseModel):
     delays: list[int] = Field(default_factory=lambda: [1, 2, 4, 15, 60])
 
 
+class SerpapiConfig(BaseModel):
+    """Serpapi/BibTeX fetching configuration."""
+
+    # Max parallel workers for BibTeX fetching (Selenium)
+    max_bibtex_workers: int = 5
+    # Upper limit for workers (safety)
+    max_workers_limit: int = 20
+
+
 class AIExtractorConfig(BaseModel):
     """AI extractor configuration."""
 
@@ -44,6 +53,7 @@ class LibbyConfig(BaseModel):
     papers_dir: Path = Field(default_factory=lambda: Path.home() / ".lib" / "papers")
     citekey: CitekeyConfig = Field(default_factory=CitekeyConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
+    serpapi: SerpapiConfig = Field(default_factory=SerpapiConfig)
     ai_extractor: AIExtractorConfig = Field(default_factory=AIExtractorConfig)
     config_path: Optional[Path] = None
 

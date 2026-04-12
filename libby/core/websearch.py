@@ -432,7 +432,9 @@ class WebSearcher:
         return serpapi_cite_link
 
     async def _fetch_serpapi_bibtex(self, serpapi_items: list[dict], api_key: str) -> list[Optional[dict]]:
-        """Fetch and parse BibTeX for all Serpapi results in parallel.
+        """Fetch and parse BibTeX for all Serpapi results with limited parallelism.
+
+        Uses Semaphore to limit concurrent workers (configured in serpapi.max_bibtex_workers).
 
         Args:
             serpapi_items: List of Serpapi search result items
@@ -441,25 +443,35 @@ class WebSearcher:
         Returns:
             List of parsed BibTeX dicts (same order as input, None for failures)
         """
-        async def fetch_single_bibtex(item: dict) -> Optional[dict]:
-            """Fetch BibTeX for single item using existing cite link."""
-            # Get cite link from inline_links (already in search results)
-            inline_links = item.get("inline_links") or {}
-            serpapi_cite_link = inline_links.get("serpapi_cite_link")
+        # Get max workers from config, enforce upper limit
+        max_workers = min(
+            self.config.serpapi.max_bibtex_workers,
+            self.config.serpapi.max_workers_limit
+        )
 
-            if not serpapi_cite_link:
+        # Semaphore to limit concurrent Selenium calls
+        semaphore = asyncio.Semaphore(max_workers)
+
+        async def fetch_single_bibtex(item: dict) -> Optional[dict]:
+            """Fetch BibTeX for single item with semaphore."""
+            async with semaphore:
+                # Get cite link from inline_links (already in search results)
+                inline_links = item.get("inline_links") or {}
+                serpapi_cite_link = inline_links.get("serpapi_cite_link")
+
+                if not serpapi_cite_link:
+                    return None
+
+                try:
+                    # Use SerpapiAPI to get BibTeX
+                    bibtex_str = await self.serpapi.get_bibtex(serpapi_cite_link, api_key)
+                    if bibtex_str:
+                        return parse_bibtex(bibtex_str)
+                except Exception as e:
+                    logger.debug(f"Failed to fetch BibTeX: {e}")
                 return None
 
-            try:
-                # Use SerpapiAPI to get BibTeX (one API call per result)
-                bibtex_str = await self.serpapi.get_bibtex(serpapi_cite_link, api_key)
-                if bibtex_str:
-                    return parse_bibtex(bibtex_str)
-            except Exception as e:
-                logger.debug(f"Failed to fetch BibTeX: {e}")
-            return None
-
-        # Fetch all in parallel
+        # Fetch all with limited parallelism
         tasks = [fetch_single_bibtex(item) for item in serpapi_items]
         return await asyncio.gather(*tasks)
 
