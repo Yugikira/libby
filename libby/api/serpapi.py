@@ -1,5 +1,7 @@
 """Serpapi Google Scholar client."""
 
+from typing import Optional
+
 from libby.api.base import AsyncAPIClient, RateLimit
 from libby.models.search_filter import SearchFilter
 
@@ -24,6 +26,46 @@ class SerpapiAPI(AsyncAPIClient):
 
     RATE_LIMIT = RateLimit(1, 5)  # 1 req per 5 seconds
     BASE_URL = "https://serpapi.com/search"
+
+    async def get_bibtex(self, serpapi_cite_link: str, api_key: str) -> Optional[str]:
+        """Fetch BibTeX citation using the cite link from search results.
+
+        Args:
+            serpapi_cite_link: The serpapi_cite_link from inline_links
+            api_key: Serpapi API key
+
+        Returns:
+            BibTeX string or None if not found
+        """
+        if not serpapi_cite_link:
+            return None
+
+        # Add API key to the cite link
+        full_url = f"{serpapi_cite_link}&api_key={api_key}"
+
+        # Get cite data (contains BibTeX link)
+        cite_data = await self.get(full_url, {})
+
+        if not cite_data or "links" not in cite_data:
+            return None
+
+        # Find BibTeX link
+        bibtex_url = None
+        for link_item in cite_data.get("links", []):
+            if link_item.get("name") == "BibTeX":
+                bibtex_url = link_item.get("link")
+                break
+
+        if not bibtex_url:
+            return None
+
+        # Fetch BibTeX content (raw text from Google, not JSON)
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(bibtex_url) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+                return None
 
     async def get_pdf_url(self, doi: str, api_key: str) -> str | None:
         """Search Google Scholar for PDF link via Serpapi.

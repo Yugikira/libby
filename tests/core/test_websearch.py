@@ -6,7 +6,7 @@ import os
 
 from libby.core.websearch import WebSearcher
 from libby.models.search_filter import SearchFilter
-from libby.models.search_result import SearchResult, SearchResults, SerpapiExtraInfo
+from libby.models.search_result import SearchResult, SearchResults, SerpapiExtraInfo, parse_bibtex
 from libby.models.config import LibbyConfig
 
 
@@ -339,27 +339,44 @@ async def test_parse_scholarly(config):
 
 @pytest.mark.asyncio
 async def test_parse_serpapi(config):
-    """Test Serpapi result parsing."""
+    """Test Serpapi result parsing - only snippet as abstract."""
     searcher = WebSearcher(config)
 
     serpapi_item = {
-        "title": "Serpapi Title",
+        "title": "Serpapi Title",  # Will be ignored, fetched from BibTeX
         "link": "https://example.com/paper",
+        "snippet": "This is the abstract from snippet.",
         "publication_info": {
             "doi": "10.1234/serpapi",
+            "summary": "2024 - Journal Name",
+            "authors": [
+                {"name": "John Smith"},  # Will be ignored, fetched from BibTeX
+                {"name": "Jane Doe"},
+            ],
         },
         "resources": [
             {"file_format": "PDF", "link": "https://example.com/pdf.pdf"}
         ],
         "cited_by": {"total": 42},
+        "inline_links": {
+            "serpapi_cite_link": "https://serpapi.com/cite?q=test"
+        },
     }
 
     result = searcher._parse_serpapi(serpapi_item)
 
-    assert result.title == "Serpapi Title"
+    # Only abstract, doi, url are extracted (title/author/year from BibTeX)
+    assert result.abstract == "This is the abstract from snippet."
     assert result.doi == "10.1234/serpapi"
     assert result.url == "https://example.com/paper"
+    assert result.title is None  # Not extracted, will come from BibTeX
+    assert result.author == []   # Not extracted, will come from BibTeX
+    assert result.year is None   # Not extracted, will come from BibTeX
     assert "serpapi" in result.sources
+
+    # Test BibTeX link extraction
+    bibtex_link = searcher._extract_bibtex_link(serpapi_item)
+    assert bibtex_link == "https://serpapi.com/cite?q=test"
 
 
 @pytest.mark.asyncio
@@ -701,3 +718,31 @@ async def test_search_with_invalid_source(config):
                 assert len(results.results) == 0
 
     await searcher.close()
+
+
+def test_parse_bibtex():
+    """Test BibTeX parsing."""
+    bibtex = """@article{chen2022private,
+  title={Private communication and management forecasts: Evidence from corporate site visits},
+  author={Chen, Xiaoqi and Cheng, CS Agnes and Xie, Jing and Yang, Haoyi},
+  journal={Corporate Governance: An International Review},
+  volume={30},
+  number={4},
+  pages={482--497},
+  year={2022},
+  publisher={Wiley Online Library}
+}"""
+
+    result = parse_bibtex(bibtex)
+
+    assert result["entry_type"] == "article"
+    assert result["citekey"] == "chen2022private"
+    assert result["title"] == "Private communication and management forecasts: Evidence from corporate site visits"
+    assert len(result["author"]) == 4
+    assert result["author"][0] == "Chen, Xiaoqi"
+    assert result["journal"] == "Corporate Governance: An International Review"
+    assert result["year"] == 2022
+    assert result["volume"] == "30"
+    assert result["number"] == "4"
+    assert result["pages"] == "482--497"
+    assert result["publisher"] == "Wiley Online Library"

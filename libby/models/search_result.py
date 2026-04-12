@@ -3,6 +3,64 @@
 from dataclasses import dataclass, field
 from typing import Optional
 import json
+import re
+
+
+def parse_bibtex(bibtex_str: str) -> dict:
+    """Parse BibTeX string to dict.
+
+    Args:
+        bibtex_str: BibTeX entry string
+
+    Returns:
+        Dict with parsed fields: entry_type, citekey, title, author, journal,
+        year, volume, number, pages, publisher, url, abstract
+    """
+    if not bibtex_str:
+        return {}
+
+    # Extract entry type and citekey
+    type_match = re.match(r'@(\w+)\{([^,]+),', bibtex_str.strip())
+    if not type_match:
+        return {}
+
+    entry_type = type_match.group(1)
+    citekey = type_match.group(2)
+
+    # Extract fields using regex
+    fields = {}
+
+    # Match field = {value} or field = "value" or field = number
+    field_pattern = r'(\w+)\s*=\s*(?:\{([^}]*)\}|"([^"]*)"|(\d+))'
+    for match in re.finditer(field_pattern, bibtex_str, re.IGNORECASE):
+        field_name = match.group(1).lower()
+        # Value is in group 2 (curly braces), 3 (quotes), or 4 (number)
+        value = match.group(2) or match.group(3) or match.group(4)
+        if value:
+            fields[field_name] = value.strip()
+
+    # Parse authors (separated by " and ")
+    authors = []
+    if "author" in fields:
+        author_str = fields["author"]
+        # Split by " and " or " and\n"
+        author_parts = re.split(r'\s+and\s+', author_str, flags=re.IGNORECASE)
+        authors = [a.strip().strip(',') for a in author_parts if a.strip()]
+
+    return {
+        "entry_type": entry_type,
+        "citekey": citekey,
+        "title": fields.get("title"),
+        "author": authors,
+        "journal": fields.get("journal"),
+        "year": int(fields["year"]) if fields.get("year") and fields["year"].isdigit() else None,
+        "volume": fields.get("volume"),
+        "number": fields.get("number"),
+        "pages": fields.get("pages"),
+        "publisher": fields.get("publisher"),
+        "url": fields.get("url"),
+        "abstract": fields.get("abstract"),
+    }
 
 
 @dataclass
@@ -114,6 +172,7 @@ class SerpapiExtraInfo:
     pdf_link: Optional[str] = None
     cited_by_count: Optional[int] = None
     related_articles_link: Optional[str] = None
+    bibtex_link: Optional[str] = None  # Link to fetch BibTeX citation
 
     def to_dict(self) -> dict:
         return {
@@ -122,6 +181,7 @@ class SerpapiExtraInfo:
             "pdf_link": self.pdf_link,
             "cited_by_count": self.cited_by_count,
             "related_articles_link": self.related_articles_link,
+            "bibtex_link": self.bibtex_link,
         }
 
 

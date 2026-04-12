@@ -1,6 +1,6 @@
 [project]
 name = "libby"
-version = "0.4.1"
+version = "0.4.2"
 description = "AI-friendly CLI tool for scholarly paper management"
 authors = [{name = "Yugi"}]
 requires-python = ">=3.10"

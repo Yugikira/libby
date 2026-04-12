@@ -10,7 +10,7 @@ from typing import Optional
 from rich.console import Console
 
 from libby.models.config import LibbyConfig
-from libby.models.search_result import SearchResult, SearchResults, SerpapiExtraInfo
+from libby.models.search_result import SearchResult, SearchResults, SerpapiExtraInfo, parse_bibtex
 from libby.models.search_filter import SearchFilter
 from libby.api.crossref import CrossrefAPI
 from libby.api.semantic_scholar import SemanticScholarAPI
@@ -170,13 +170,37 @@ class WebSearcher:
                     if serpapi_raw:
                         sources_used.append("serpapi")
 
-                        for item in serpapi_raw:
+                        # Fetch BibTeX for all results in parallel
+                        bibtex_results = await self._fetch_serpapi_bibtex(serpapi_raw, api_key)
+
+                        for i, item in enumerate(serpapi_raw):
                             result = self._parse_serpapi(item)
+
+                            # Merge BibTeX data if available
+                            if i < len(bibtex_results) and bibtex_results[i]:
+                                bibtex_data = bibtex_results[i]
+                                if bibtex_data:
+                                    # Create SearchResult from BibTeX and merge
+                                    bibtex_result = SearchResult(
+                                        title=bibtex_data.get("title"),
+                                        author=bibtex_data.get("author", []),
+                                        year=bibtex_data.get("year"),
+                                        journal=bibtex_data.get("journal"),
+                                        volume=bibtex_data.get("volume"),
+                                        number=bibtex_data.get("number"),
+                                        pages=bibtex_data.get("pages"),
+                                        publisher=bibtex_data.get("publisher"),
+                                        abstract=bibtex_data.get("abstract"),
+                                        entry_type=bibtex_data.get("entry_type", "article"),
+                                    )
+                                    result.merge_from(bibtex_result)
+
                             serpapi_extra_info = SerpapiExtraInfo(
                                 doi=result.doi or self._extract_doi_from_serpapi(item),
                                 link=item.get("link"),
                                 pdf_link=self._extract_pdf_link(item),
                                 cited_by_count=item.get("cited_by", {}).get("total"),
+                                bibtex_link=self._extract_bibtex_link(item),
                             )
                             serpapi_extra.append(serpapi_extra_info)
 
@@ -316,15 +340,25 @@ class WebSearcher:
         )
 
     def _parse_serpapi(self, item: dict) -> SearchResult:
-        """Parse Serpapi API result to SearchResult."""
+        """Parse Serpapi result - only extract snippet as abstract.
+
+        Full metadata (title, author, journal, etc.) will be fetched from BibTeX.
+        This only extracts:
+        - abstract: item["snippet"] (search result summary)
+        - doi: from link URL if available
+        - url: item["link"]
+        """
         pub_info = item.get("publication_info") or {}
 
         # DOI from publication_info or link
         doi = pub_info.get("doi") or self._extract_doi_from_serpapi(item)
 
+        # Snippet as abstract (will be kept if BibTeX doesn't have abstract)
+        abstract = item.get("snippet")
+
         return SearchResult(
             doi=doi,
-            title=item.get("title"),
+            abstract=abstract,
             url=item.get("link"),
             sources=["serpapi"],
         )
@@ -359,6 +393,51 @@ class WebSearcher:
             return link
 
         return None
+
+    def _extract_bibtex_link(self, item: dict) -> Optional[str]:
+        """Extract BibTeX link from Serpapi result.
+
+        From inline_links["serpapi_cite_link"] - returns a link that
+        when fetched gives a dict with "links" list containing BibTeX link.
+
+        Returns:
+            URL to fetch BibTeX citation (requires API key)
+        """
+        inline_links = item.get("inline_links") or {}
+        serpapi_cite_link = inline_links.get("serpapi_cite_link")
+        return serpapi_cite_link
+
+    async def _fetch_serpapi_bibtex(self, serpapi_items: list[dict], api_key: str) -> list[Optional[dict]]:
+        """Fetch and parse BibTeX for all Serpapi results in parallel.
+
+        Args:
+            serpapi_items: List of Serpapi search result items
+            api_key: Serpapi API key
+
+        Returns:
+            List of parsed BibTeX dicts (same order as input, None for failures)
+        """
+        async def fetch_single_bibtex(item: dict) -> Optional[dict]:
+            """Fetch BibTeX for single item using existing cite link."""
+            # Get cite link from inline_links (already in search results)
+            inline_links = item.get("inline_links") or {}
+            serpapi_cite_link = inline_links.get("serpapi_cite_link")
+
+            if not serpapi_cite_link:
+                return None
+
+            try:
+                # Use SerpapiAPI to get BibTeX (one API call per result)
+                bibtex_str = await self.serpapi.get_bibtex(serpapi_cite_link, api_key)
+                if bibtex_str:
+                    return parse_bibtex(bibtex_str)
+            except Exception as e:
+                logger.debug(f"Failed to fetch BibTeX: {e}")
+            return None
+
+        # Fetch all in parallel
+        tasks = [fetch_single_bibtex(item) for item in serpapi_items]
+        return await asyncio.gather(*tasks)
 
     def _merge_by_doi(self, results: list[SearchResult]) -> list[SearchResult]:
         """Merge results by DOI using SearchResult.merge_from().
