@@ -85,6 +85,9 @@ libby websearch "10.1234/test"                       # DOI -> fetch fallback
 libby websearch "quantum" --format json              # JSON output
 libby websearch "physics" -o results.bib             # Save to file
 libby websearch "biology" --no-serpapi               # Skip Serpapi
+libby websearch "deep learning" --source crossref    # Single source
+libby websearch "neural nets" --author Smith         # Author filter
+libby websearch "AI" --issn 0028-0836                # ISSN filter
 ```
 
 **Sources searched in parallel:**
@@ -102,6 +105,20 @@ libby websearch "biology" --no-serpapi               # Skip Serpapi
 - Max 5 pages per search (50 results)
 - Separate `_serpapi.json` output file
 - Skip with `--no-serpapi` to save quota
+
+**Journal resolution:**
+- `--venue Nature` → auto-resolves to ISSN via Crossref Journals API
+- `--issn 0028-0836` → auto-resolves to journal name
+- Both venue and ISSN: verifies match, warns if mismatch
+
+**Author filtering:**
+- Crossref/S2: post-filtering (matches surname or full name)
+- Scholarly/Serpapi: query enhancement (`author:{name}`)
+
+**Default output:**
+- Path: `~/.lib/papers/search_results/yymmdd_{keywords}.bib`
+- Display: summary table (first 3 + last 3 results)
+- Skip with `--no-save` for CLI-only output
 
 **DOI fallback:**
 If you provide a DOI instead of keywords, libby will:
