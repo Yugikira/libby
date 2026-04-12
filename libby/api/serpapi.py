@@ -88,17 +88,23 @@ class SerpapiAPI(AsyncAPIClient):
         if not data or "error" in data:
             return None
 
-        # Search organic results for PDF links
-        for result in data.get("organic_results", []):
-            link = result.get("link", "")
-            if link.endswith(".pdf"):
-                return link
+        # Only check the first organic result (most relevant match)
+        organic_results = data.get("organic_results", [])
+        if not organic_results:
+            return None
 
-            # Check for PDF resource
-            resources = result.get("resources", [])
-            for res in resources:
-                if res.get("file_format") == "PDF":
-                    return res.get("link")
+        result = organic_results[0]
+
+        # Check main link for PDF
+        link = result.get("link", "")
+        if link.endswith(".pdf"):
+            return link
+
+        # Check for PDF resource
+        resources = result.get("resources", [])
+        for res in resources:
+            if res.get("file_format") == "PDF":
+                return res.get("link")
 
         return None
 
