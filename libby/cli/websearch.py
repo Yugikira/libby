@@ -18,6 +18,8 @@ from libby.core.metadata import MetadataExtractor
 from libby.core.pdf_fetcher import PDFFetcher
 from libby.models.search_filter import SearchFilter
 from libby.models.search_result import SearchResults
+from libby.output.bibtex import BibTeXFormatter
+from libby.output.json import JSONFormatter
 from libby.utils.doi_parser import is_doi
 
 console = Console()
@@ -127,9 +129,6 @@ def _handle_doi_fallback(doi: str, config, output: Optional[Path], format: str):
                 console.print(f"[yellow]PDF not found: {result.error}[/yellow]")
 
             # Output metadata
-            from libby.output.bibtex import BibTeXFormatter
-            from libby.output.json import JSONFormatter
-
             if format == "json":
                 formatter = JSONFormatter()
                 output_text = formatter.format(metadata)
@@ -138,6 +137,7 @@ def _handle_doi_fallback(doi: str, config, output: Optional[Path], format: str):
                 output_text = formatter.format(metadata)
 
             if output:
+                output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(output_text)
                 console.print(f"[green]Metadata saved to {output}[/green]")
             else:
@@ -205,6 +205,9 @@ def _display_results(results: SearchResults, query: str):
 
 def _save_output(results: SearchResults, output: Path, format: str, config):
     """Save results to output file."""
+    # Ensure parent directory exists
+    output.parent.mkdir(parents=True, exist_ok=True)
+
     if format == "json":
         output_text = results.to_json()
         output.write_text(output_text)
