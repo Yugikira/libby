@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import re
 from difflib import SequenceMatcher
 from typing import Optional
@@ -35,10 +34,10 @@ class WebSearcher:
     def __init__(self, config: LibbyConfig):
         self.config = config
         self.console = Console()
-        self.crossref = CrossrefAPI(mailto=os.getenv("EMAIL"))
-        self.s2 = SemanticScholarAPI(api_key=os.getenv("S2_API_KEY"))
+        self.crossref = CrossrefAPI(mailto=config.get_email())
+        self.s2 = SemanticScholarAPI(api_key=config.get_s2_api_key())
         self.scholarly = ScholarlyAPI()
-        self.serpapi = SerpapiAPI() if os.getenv("SERPAPI_API_KEY") else None
+        self.serpapi = SerpapiAPI() if config.get_serpapi_api_key() else None
 
     async def search(
         self,
@@ -55,14 +54,14 @@ class WebSearcher:
             filter: Unified SearchFilter
             limit: Result count per source
             skip_serpapi: Skip Serpapi search (free sources only)
-            sources: List of specific sources to use (crossref, semantic_scholar, scholarly, serpapi)
-                     If None, uses all free sources (crossref, semantic_scholar, scholarly)
+            sources: List of specific sources to use (crossref, s2, scholarly, serpapi)
+                     If None, uses all free sources (crossref, s2, scholarly)
 
         Returns:
             SearchResults with merged results and serpapi_extra
         """
         # Valid source names
-        VALID_SOURCES = {"crossref", "semantic_scholar", "scholarly", "serpapi"}
+        VALID_SOURCES = {"crossref", "s2", "scholarly", "serpapi"}
 
         # Determine which sources to use
         if sources:
@@ -72,7 +71,7 @@ class WebSearcher:
                 logger.warning(f"Invalid sources ignored: {invalid}")
             sources = [s for s in sources if s in VALID_SOURCES]
             use_crossref = "crossref" in sources
-            use_s2 = "semantic_scholar" in sources
+            use_s2 = "s2" in sources
             use_scholarly = "scholarly" in sources
             use_serpapi = "serpapi" in sources
         else:
@@ -104,7 +103,7 @@ class WebSearcher:
 
         if use_s2:
             parallel_tasks.append(self.s2.search(query, limit=limit, filter=filter))
-            parallel_names.append("semantic_scholar")
+            parallel_names.append("s2")
 
         if use_scholarly:
             parallel_tasks.append(self.scholarly.search(query, limit=limit, filter=filter))
@@ -133,7 +132,7 @@ class WebSearcher:
             if name == "crossref":
                 for item in result:
                     crossref_results.append(self._parse_crossref(item))
-            elif name == "semantic_scholar":
+            elif name == "s2":
                 for item in result:
                     s2_results.append(self._parse_s2(item))
             elif name == "scholarly":
@@ -154,7 +153,7 @@ class WebSearcher:
 
         # 5. Serpapi separately (controlled usage)
         if use_serpapi and self.serpapi:
-            api_key = os.getenv("SERPAPI_API_KEY")
+            api_key = self.config.get_serpapi_api_key()
             if api_key:
                 try:
                     serpapi_raw, quota_reached = await self.serpapi.search(
@@ -289,25 +288,36 @@ class WebSearcher:
         external_ids = item.get("externalIds") or {}
         doi = external_ids.get("DOI")
 
-        # Authors as list of dicts
+        # Authors as list of strings
         authors = []
         for author in item.get("authors", []):
             name = author.get("name")
             if name:
                 authors.append(name)
 
-        # Venue or journal
-        venue = item.get("venue")
-        journal = venue if venue else item.get("journal")
+        # Journal is a nested object: {name, volume, pages, ...}
+        journal_data = item.get("journal") or {}
+        journal_name = journal_data.get("name") if journal_data else None
+        # Fallback to venue if journal.name is empty
+        if not journal_name:
+            venue = item.get("venue")
+            if venue:  # venue can be empty string ""
+                journal_name = venue
+
+        # Extract volume, pages from journal object
+        volume = journal_data.get("volume") if journal_data else None
+        pages = journal_data.get("pages") if journal_data else None
 
         return SearchResult(
             doi=doi,
             title=item.get("title"),
             author=authors,
             year=item.get("year"),
-            journal=journal,
+            journal=journal_name,
+            volume=volume,
+            pages=pages,
             abstract=item.get("abstract"),
-            sources=["semantic_scholar"],
+            sources=["s2"],
         )
 
     def _parse_scholarly(self, item: dict) -> SearchResult:

@@ -1,6 +1,5 @@
 """PDF fetching orchestration with source cascade."""
 
-import os
 import logging
 import shutil
 from pathlib import Path
@@ -46,12 +45,12 @@ class PDFFetcher:
 
         # Initialize API clients
         self.crossref = CrossrefAPI()
-        self.unpaywall = UnpaywallAPI() if os.getenv("EMAIL") else None
-        self.s2 = SemanticScholarAPI(api_key=os.getenv("S2_API_KEY"))
+        self.unpaywall = UnpaywallAPI() if config.get_email() else None
+        self.s2 = SemanticScholarAPI(api_key=config.get_s2_api_key())
         self.core = CoreAPI()
         self.biorxiv = BiorxivAPI()
         self.scihub = ScihubAPI(config.scihub_url)
-        self.serpapi = SerpapiAPI() if os.getenv("SERPAPI_API_KEY") else None
+        self.serpapi = SerpapiAPI() if config.get_serpapi_api_key() else None
 
         # Selenium downloader (lazy init)
         self._scihub_downloader: ScihubDownloader | None = None
@@ -108,7 +107,7 @@ class PDFFetcher:
 
         # 2. Unpaywall
         if self.unpaywall:
-            pdf_url, meta = await self.unpaywall.get_pdf_url(doi, os.getenv("EMAIL"))
+            pdf_url, meta = await self.unpaywall.get_pdf_url(doi, self.config.get_email())
             if pdf_url:
                 metadata.update(meta)
                 if await self._try_download(pdf_url, target_path):
@@ -265,7 +264,7 @@ class PDFFetcher:
 
         elif source == "unpaywall":
             if self.unpaywall:
-                pdf_url, meta = await self.unpaywall.get_pdf_url(doi, os.getenv("EMAIL"))
+                pdf_url, meta = await self.unpaywall.get_pdf_url(doi, self.config.get_email())
                 if meta:
                     found_info = True
                     metadata.update(meta)

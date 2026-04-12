@@ -1,5 +1,7 @@
 """Semantic Scholar API client."""
 
+from datetime import datetime
+
 from libby.api.base import AsyncAPIClient, RateLimit
 from libby.models.search_filter import SearchFilter
 
@@ -81,15 +83,19 @@ class SemanticScholarAPI(AsyncAPIClient):
         params = {
             "query": query,
             "limit": limit,
-            "fields": "title,year,authors,abstract,externalIds,venue,journal,issn",
+            # Note: 'issn' is not a valid S2 field - use externalIds.DOI instead
+            "fields": "title,year,authors,abstract,externalIds,venue,journal",
         }
 
         # Convert SearchFilter to S2 native params
+        # S2 API: year=2020 means "papers from 2020 only"
+        #         year=2020-2024 means "papers from 2020 to 2024"
+        # When year_from is set but year_to is not, use current year as end
         if filter.year_from is not None:
-            if filter.year_to is not None:
-                params["year"] = f"{filter.year_from}-{filter.year_to}"
-            else:
-                params["year"] = str(filter.year_from)
+            year_to = filter.year_to
+            if year_to is None:
+                year_to = datetime.now().year  # Use current year as end
+            params["year"] = f"{filter.year_from}-{year_to}"
 
         if filter.venue:
             params["venue"] = filter.venue

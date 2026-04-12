@@ -1,5 +1,6 @@
 """Configuration models using pydantic."""
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -32,10 +33,26 @@ class RetryConfig(BaseModel):
 class SerpapiConfig(BaseModel):
     """Serpapi/BibTeX fetching configuration."""
 
+    # API key (optional, can also use SERPAPI_API_KEY env var)
+    api_key: Optional[str] = None
     # Max parallel workers for BibTeX fetching (Selenium)
     max_bibtex_workers: int = 5
     # Upper limit for workers (safety)
     max_workers_limit: int = 20
+
+
+class SemanticScholarConfig(BaseModel):
+    """Semantic Scholar API configuration."""
+
+    # API key (optional, can also use S2_API_KEY env var)
+    api_key: Optional[str] = None
+
+
+class UnpaywallConfig(BaseModel):
+    """Unpaywall API configuration."""
+
+    # Email for Unpaywall access (optional, can also use EMAIL env var)
+    email: Optional[str] = None
 
 
 class AIExtractorConfig(BaseModel):
@@ -54,6 +71,8 @@ class LibbyConfig(BaseModel):
     citekey: CitekeyConfig = Field(default_factory=CitekeyConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     serpapi: SerpapiConfig = Field(default_factory=SerpapiConfig)
+    semantic_scholar: SemanticScholarConfig = Field(default_factory=SemanticScholarConfig)
+    unpaywall: UnpaywallConfig = Field(default_factory=UnpaywallConfig)
     ai_extractor: AIExtractorConfig = Field(default_factory=AIExtractorConfig)
     config_path: Optional[Path] = None
 
@@ -62,3 +81,19 @@ class LibbyConfig(BaseModel):
     pdf_max_size: int = 50 * 1024 * 1024  # 50 MB
 
     model_config = ConfigDict(extra="ignore")
+
+    def get_s2_api_key(self) -> Optional[str]:
+        """Get S2 API key from config or environment."""
+        return self.semantic_scholar.api_key or os.getenv("S2_API_KEY")
+
+    def get_serpapi_api_key(self) -> Optional[str]:
+        """Get Serpapi API key from config or environment."""
+        return self.serpapi.api_key or os.getenv("SERPAPI_API_KEY")
+
+    def get_email(self) -> Optional[str]:
+        """Get email for Unpaywall from config or environment."""
+        return self.unpaywall.email or os.getenv("EMAIL")
+
+    def get_ai_api_key(self) -> Optional[str]:
+        """Get AI API key from config or environment."""
+        return self.ai_extractor.api_key or os.getenv("DEEPSEEK_API_KEY")

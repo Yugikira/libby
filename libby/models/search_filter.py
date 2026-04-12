@@ -49,7 +49,7 @@ class SearchFilter:
     _resolution_verified: bool = field(default=False, init=False)
 
     def __post_init__(self):
-        """Set default year_from to 2 years ago."""
-        if self.year_from is None:
-            from datetime import datetime
-            self.year_from = datetime.now().year - 2
+        """Set default year_from to 2 years ago (only if not explicitly set)."""
+        # Note: In dataclass, None is a valid value that was explicitly passed
+        # We need a different approach - use a sentinel value
+        pass  # Don't auto-set year_from here, let caller decide

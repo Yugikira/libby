@@ -6,7 +6,10 @@ from pathlib import Path
 import yaml
 
 from libby.config.defaults import DEFAULT_CONFIG_PATH, DEFAULT_CONFIG_YAML
-from libby.models.config import LibbyConfig, CitekeyConfig, RetryConfig, AIExtractorConfig
+from libby.models.config import (
+    LibbyConfig, CitekeyConfig, RetryConfig,
+    AIExtractorConfig, SerpapiConfig, SemanticScholarConfig, UnpaywallConfig
+)
 
 
 def load_config(config_path: Path | None = None) -> LibbyConfig:
@@ -37,6 +40,9 @@ def load_config(config_path: Path | None = None) -> LibbyConfig:
         papers_dir=Path(data.get("papers_dir", "~/.lib/papers")).expanduser(),
         citekey=CitekeyConfig(**data.get("citekey", {})),
         retry=RetryConfig(**data.get("retry", {})),
+        serpapi=SerpapiConfig(**data.get("serpapi", {})),
+        semantic_scholar=SemanticScholarConfig(**data.get("semantic_scholar", {})),
+        unpaywall=UnpaywallConfig(**data.get("unpaywall", {})),
         ai_extractor=AIExtractorConfig(**data.get("ai_extractor", {})),
         config_path=path,
     )

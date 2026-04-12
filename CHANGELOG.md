@@ -2,6 +2,28 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.4.3] - 2026-04-13
+
+### Added
+- **Environment variables in YAML config**
+  - `semantic_scholar.api_key` - alternative to S2_API_KEY env var
+  - `serpapi.api_key` - alternative to SERPAPI_API_KEY env var
+  - `unpaywall.email` - alternative to EMAIL env var
+  - `ai_extractor.api_key` - alternative to DEEPSEEK_API_KEY env var
+  - Config file values take precedence over environment variables
+
+### Changed
+- **Unified source parameter naming**: `--source s2` for both fetch and websearch
+  - Previously: fetch used `s2`, websearch used `semantic_scholar`
+  - Now: both commands use `s2` consistently
+
+### Fixed
+- **Semantic Scholar search fixes**
+  - Remove invalid `issn` field from S2 API request (caused error)
+  - Fix year filter: `year_from` now correctly converts to `year={from}-{current_year}` range
+  - Parse journal nested object: extract `journal.name`, `volume`, `pages`
+  - Journal fallback to `venue` field when `journal.name` is empty
+
 ## [0.4.2] - 2026-04-13
 
 ### Added

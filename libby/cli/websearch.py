@@ -39,7 +39,7 @@ def websearch(
     issn: Optional[str] = typer.Option(None, "--issn", help="ISSN filter"),
     source: Optional[str] = typer.Option(
         None, "--source", "-s",
-        help="Use specific source only (crossref, semantic_scholar, scholarly, serpapi)"
+        help="Use specific source only (crossref, s2, scholarly, serpapi)"
     ),
     no_serpapi: bool = typer.Option(False, "--no-serpapi", help="Skip Serpapi search"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
@@ -60,7 +60,7 @@ def websearch(
         libby websearch "AI" --year-from 2020 --author Smith --venue Nature
         libby websearch "corporate site visit" --format json --output results.json
         libby websearch "deep learning" --source crossref
-        libby websearch "neural networks" --source semantic_scholar
+        libby websearch "neural networks" --source s2
     """
     # Environment check
     if not no_env_check:
@@ -81,9 +81,11 @@ def websearch(
         _handle_doi_fallback(query, config, output, format)
         return
 
-    # Build search filter
+    # Build search filter with default year_from
+    from datetime import datetime
+    default_year_from = datetime.now().year - 2
     search_filter = SearchFilter(
-        year_from=year_from,
+        year_from=year_from if year_from is not None else default_year_from,
         year_to=year_to,
         author=author,
         venue=venue,
