@@ -2,6 +2,21 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.4.1] - 2026-04-12
+
+### Added
+- **Websearch improvements**
+  - `--source` parameter for single-source search (crossref, semantic_scholar, scholarly, serpapi)
+  - `--author` parameter for author name filtering
+  - `--venue` and `--issn` journal resolution via Crossref Journals API
+  - Default output path: `~/.lib/papers/search_results/yymmdd_{keywords}.bib`
+  - Summary display: first 3 + last 3 results in table
+  - `--no-save` option to skip file output
+
+### Changed
+- Author filtering strategy: post-filter for Crossref/S2, query helper for Scholarly/Serpapi
+- Serpapi supports SearchFilter (year range via as_ylo/as_yhi, author/venue helpers)
+
 ## [0.4.0] - 2026-04-12
 
 ### Added
