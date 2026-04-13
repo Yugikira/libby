@@ -282,9 +282,18 @@ libby websearch "nature climate" --format json --no-save \
 
 Order: Crossref OA → Unpaywall → Semantic Scholar → CORE → arXiv → PMC → bioRxiv → Sci-hub → Serpapi
 
+**Single source mode**: Use `--source` to bypass cascade and try only one source:
+```bash
+libby fetch doi --source unpaywall
+libby fetch doi --source s2
+libby fetch doi --source serpapi  # Direct Serpapi search
+```
+
 **CORE.ac.uk**: Finds OA versions from institutional repositories worldwide (SMU ink.library, web.archive.org). Useful when publisher links return 403.
 
 **Sci-hub Fallback**: Automatic Selenium WebDriver when aiohttp fails (blocked/CAPTCHA). Requires Chrome browser.
+
+**Serpapi**: Google Scholar search for PDF links (uses API quota, requires confirmation in cascade mode).
 
 ## Web Search Sources
 

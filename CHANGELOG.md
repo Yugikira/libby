@@ -12,6 +12,7 @@ All notable changes to libby will be documented in this file.
   - `ai_extractor.api_key` - alternative to DEEPSEEK_API_KEY env var
   - Config file values take precedence over environment variables
 - **Stdin pipeline for fetch** (`cat dois.txt | libby fetch`)
+- **`--source serpapi` for fetch**: Direct Serpapi search without cascade confirmation
 
 ### Changed
 - **Unified source parameter naming**: `--source s2` for both fetch and websearch

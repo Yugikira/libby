@@ -380,6 +380,28 @@ class PDFFetcher:
                     doi=doi, success=False, source=None, pdf_url=None, error=str(e)
                 )
 
+        elif source == "serpapi":
+            if not self.serpapi:
+                return FetchResult(
+                    doi=doi, success=False, source=None, pdf_url=None,
+                    error="Serpapi unavailable: SERPAPI_API_KEY not set"
+                )
+            api_key = self.config.get_serpapi_api_key()
+            if not api_key:
+                return FetchResult(
+                    doi=doi, success=False, source=None, pdf_url=None,
+                    error="Serpapi unavailable: SERPAPI_API_KEY not set"
+                )
+            pdf_url = await self.serpapi.get_pdf_url(doi, api_key)
+            if pdf_url:
+                source_name = "serpapi"
+                found_info = True
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source=source_name,
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    )
+
         else:
             return FetchResult(
                 doi=doi, success=False, source=None, pdf_url=None,

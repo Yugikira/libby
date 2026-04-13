@@ -26,7 +26,7 @@ def fetch(
     input: Optional[str] = typer.Argument(None, help="DOI to fetch"),
     batch_file: Optional[Path] = typer.Option(None, "--batch", "-b", help="File with DOIs (one per line)"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Override papers directory"),
-    source: Optional[str] = typer.Option(None, "--source", "-s", help="Use specific source only (crossref, unpaywall, s2, arxiv, pmc, biorxiv, scihub)"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Use specific source only (crossref, unpaywall, s2, core, arxiv, pmc, biorxiv, scihub, serpapi)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show PDF URL without downloading"),
     no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub source"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
@@ -67,7 +67,7 @@ def fetch(
         raise typer.Exit(1)
 
     # Validate source option
-    valid_sources = ["crossref", "unpaywall", "s2", "core", "arxiv", "pmc", "biorxiv", "scihub"]
+    valid_sources = ["crossref", "unpaywall", "s2", "core", "arxiv", "pmc", "biorxiv", "scihub", "serpapi"]
     if source and source.lower() not in valid_sources:
         console.print(f"[red]Invalid source '{source}'. Valid options: {', '.join(valid_sources)}[/red]")
         raise typer.Exit(1)
