@@ -33,13 +33,15 @@ class ScholarlyAPI:
         Args:
             query: Search keywords
             limit: Result count
-            filter: Unified SearchFilter
+            filter: Unified SearchFilter (default: year_from = current_year - 2)
 
         Returns:
             Raw result list from scholarly
         """
+        # Create default filter with year_from = current_year - 2
         if filter is None:
-            filter = SearchFilter()
+            from datetime import datetime
+            filter = SearchFilter(year_from=datetime.now().year - 2)
 
         # Enhance query with filter keywords
         enhanced_query = query

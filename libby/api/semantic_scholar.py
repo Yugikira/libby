@@ -7,12 +7,23 @@ from libby.models.search_filter import SearchFilter
 
 
 class SemanticScholarAPI(AsyncAPIClient):
-    """Semantic Scholar API for paper metadata and OA PDFs."""
+    """Semantic Scholar API for paper metadata and OA PDFs.
 
-    RATE_LIMIT = RateLimit(1, 1)  # Always 1 req/sec, even with API key
+    Rate limits (per Semantic Scholar docs):
+        - With API key: 1 request / second 
+        - Without key: 100 requests / 5 minutes 
+    """
+
     BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
     def __init__(self, api_key: str | None = None):
+        # Rate limit based on API key presence
+        if api_key:
+            rate_limit = RateLimit(1, 1)  # Conservative: 1 req/sec (docs: 5000 req/5 min)
+        else:
+            rate_limit = RateLimit(1, 3)  # Conservative: 1 req/3 sec (docs: 100 req/5 min)
+        self.RATE_LIMIT = rate_limit
+
         super().__init__()
         self.api_key = api_key
 
@@ -70,14 +81,14 @@ class SemanticScholarAPI(AsyncAPIClient):
         Args:
             query: Search keywords
             limit: Result count
-            filter: Unified SearchFilter
+            filter: Unified SearchFilter (default: year_from = current_year - 2)
 
         Returns:
             Raw result list from S2
         """
-        # Create default filter if not provided
+        # Create default filter with year_from = current_year - 2
         if filter is None:
-            filter = SearchFilter()
+            filter = SearchFilter(year_from=datetime.now().year - 2)
 
         url = f"{self.BASE_URL}/paper/search"
         params = {

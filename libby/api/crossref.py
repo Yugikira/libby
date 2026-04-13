@@ -73,14 +73,15 @@ class CrossrefAPI(AsyncAPIClient):
         Args:
             query: Search keywords
             rows: Result count (default 50)
-            filter: Unified SearchFilter
+            filter: Unified SearchFilter (default: year_from = current_year - 2)
 
         Returns:
             Raw result list from Crossref
         """
-        # Use default filter if none provided
+        # Create default filter with year_from = current_year - 2
         if filter is None:
-            filter = SearchFilter()
+            from datetime import datetime
+            filter = SearchFilter(year_from=datetime.now().year - 2)
 
         # Build Crossref filter string
         filter_parts = []
