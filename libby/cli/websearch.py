@@ -23,6 +23,7 @@ from libby.models.search_result import SearchResults
 from libby.output.bibtex import BibTeXFormatter
 from libby.output.json import JSONFormatter
 from libby.utils.doi_parser import is_doi
+from libby.cli.serpapi_policy import SerpapiPolicy, parse_serpapi_policy, SERPAPI_POLICY_HELP
 
 console = Console()
 
@@ -41,7 +42,7 @@ def websearch(
         None, "--source", "-s",
         help="Use specific source only (crossref, s2, scholarly, serpapi)"
     ),
-    no_serpapi: bool = typer.Option(False, "--no-serpapi", help="Skip Serpapi search"),
+    serpapi: str = typer.Option("deny", "--serpapi", help=SERPAPI_POLICY_HELP),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
     no_env_check: bool = typer.Option(False, "--no-env-check", help="Skip environment check"),
     no_save: bool = typer.Option(False, "--no-save", help="Do not save results to file"),
@@ -52,6 +53,13 @@ def websearch(
 
     Sources: Crossref, Semantic Scholar, Scholarly, Serpapi (optional)
 
+    --serpapi policy:
+        - deny: Do not use Serpapi (default)
+        - ask: Use Serpapi if key available (no prompts in batch)
+        - auto: Auto-use Serpapi without confirmation
+
+    --source serpapi: Bypass other sources and policy, use Serpapi directly.
+
     Default output: ~/.lib/search_results/yymmdd_{keywords}.bib
 
     Examples:
@@ -61,10 +69,18 @@ def websearch(
         libby websearch "corporate site visit" --format json --output results.json
         libby websearch "deep learning" --source crossref
         libby websearch "neural networks" --source s2
+        libby websearch "AI" --serpapi auto
     """
     # Environment check
     if not no_env_check:
         check_env_vars()
+
+    # Parse serpapi policy
+    try:
+        serpapi_policy = parse_serpapi_policy(serpapi)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
 
     # Load config
     config = load_config(config_path)
@@ -98,11 +114,16 @@ def websearch(
         try:
             # Convert source string to list
             sources_list = [source] if source else None
+            # skip_serpapi: deny = True, ask/auto = False (or no key)
+            skip_serpapi = (
+                serpapi_policy == SerpapiPolicy.deny
+                or not (os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key())
+            )
             results = await searcher.search(
                 query,
                 filter=search_filter,
                 limit=limit,
-                skip_serpapi=no_serpapi,
+                skip_serpapi=skip_serpapi,
                 sources=sources_list,
             )
             return results

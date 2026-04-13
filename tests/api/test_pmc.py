@@ -6,13 +6,13 @@ from libby.api.pmc import PMCAPI
 def test_get_pdf_url_with_pmc_prefix():
     """Test PMCID with PMC prefix."""
     url = PMCAPI.get_pdf_url("PMC123456")
-    assert url == "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC123456/pdf/"
+    assert url == "https://pmc.ncbi.nlm.nih.gov/articles/PMC123456/pdf/main.pdf"
 
 
 def test_get_pdf_url_without_prefix():
     """Test PMCID without PMC prefix."""
     url = PMCAPI.get_pdf_url("123456")
-    assert url == "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC123456/pdf/"
+    assert url == "https://pmc.ncbi.nlm.nih.gov/articles/PMC123456/pdf/main.pdf"
 
 
 def test_get_pdf_url_lowercase():

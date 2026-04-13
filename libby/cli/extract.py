@@ -16,6 +16,7 @@ from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
 from libby.utils.file_ops import FileHandler
 from libby.utils.doi_parser import is_doi
 from libby.cli.utils import read_stdin_lines, process_batch, save_failed_tasks
+from libby.cli.serpapi_policy import SerpapiPolicy, parse_serpapi_policy, SERPAPI_POLICY_HELP
 from libby.output.bibtex import BibTeXFormatter
 from libby.output.json import JSONFormatter
 from libby.models.metadata import BibTeXMetadata
@@ -69,7 +70,8 @@ def extract(
     no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub when fetching"),
     with_doi: Optional[str] = typer.Option(None, "--with-doi", help="Provide DOI for PDF input (scanned PDFs)"),
     with_title: Optional[str] = typer.Option(None, "--with-title", help="Provide title for PDF input (scanned PDFs)"),
-    serpapi: bool = typer.Option(False, "--serpapi", help="Use Serpapi (Google Scholar) when Crossref/S2 fail"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Use specific source only (crossref, s2, serpapi)"),
+    serpapi: str = typer.Option("deny", "--serpapi", help=SERPAPI_POLICY_HELP),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
     no_env_check: bool = typer.Option(False, "--no-env-check", help="Skip environment variable check"),
 ):
@@ -88,13 +90,28 @@ def extract(
     Title search cascade:
         1. Crossref (free)
         2. Semantic Scholar (free)
-        3. Serpapi (uses quota, requires --serpapi flag or user confirmation)
+        3. Serpapi (uses quota, controlled by --serpapi policy)
+
+    --source serpapi: Direct Serpapi search (bypasses cascade and --serpapi policy).
 
     With --fetch flag, also download PDF for DOI inputs.
     """
     # Environment check
     if not no_env_check:
         check_env_vars()
+
+    # Parse serpapi policy
+    try:
+        serpapi_policy = parse_serpapi_policy(serpapi)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    # Validate source option
+    valid_sources = ["crossref", "s2", "serpapi"]
+    if source and source.lower() not in valid_sources:
+        console.print(f"[red]Invalid source '{source}'. Valid options: {', '.join(valid_sources)}[/red]")
+        raise typer.Exit(1)
 
     # Load config
     config = load_config(config_path)
@@ -154,10 +171,24 @@ def extract(
         console.print("[red]No input provided. Use --help for usage.[/red]")
         raise typer.Exit(1)
 
+    # Determine use_serpapi based on policy and source
+    # --source serpapi bypasses policy and uses Serpapi directly
+    use_serpapi_direct = source and source.lower() == "serpapi"
+
+    # Handle --source serpapi: direct Serpapi search
+    if use_serpapi_direct:
+        console.print(f"[green]Processing {len(inputs)} input(s) via Serpapi...[/green]")
+
+        async def run_extraction():
+            results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=True)
+            await extractor.close()
+            return results
+
+        results = run_async(run_extraction())
+
     # Handle single DOI with --fetch (input is just a DOI string)
-    first_input = inputs[0]
-    if fetch and len(inputs) == 1 and is_doi(first_input[0]) and not Path(first_input[0]).exists():
-        doi = first_input[0]
+    elif fetch and len(inputs) == 1 and is_doi(inputs[0][0]) and not Path(inputs[0][0]).exists():
+        doi = inputs[0][0]
         console.print(f"[green]Fetching PDF for DOI: {doi}[/green]")
 
         async def run_fetch_single():
@@ -171,7 +202,7 @@ def extract(
                 metadata = await extractor.extract_from_doi(doi)
 
                 # Fetch PDF
-                result = await fetcher.fetch(doi)
+                result = await fetcher.fetch(doi, no_scihub=no_scihub)
 
                 if result.success:
                     # Download
@@ -203,20 +234,39 @@ def extract(
                     console.print(BibTeXFormatter().format(metadata))
 
             except SerpapiConfirmationNeeded as e:
-                if no_scihub:
-                    console.print("[yellow]All sources failed, Sci-hub disabled by --no-scihub[/yellow]")
-                elif os.getenv("SERPAPI_API_KEY"):
-                    console.print(SerpapiConfirmationNeeded(e.doi).message)
-                    if Confirm.ask("Use Serpapi?"):
+                await extractor.close()
+                # Handle Serpapi based on policy
+                if serpapi_policy == SerpapiPolicy.deny:
+                    console.print("[yellow]All sources failed. Use --serpapi ask or auto to try Serpapi.[/yellow]")
+                elif serpapi_policy == SerpapiPolicy.ask:
+                    if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
+                        console.print(e.message)
+                        if Confirm.ask("Use Serpapi?"):
+                            fetcher.serpapi = None
+                            result = await fetcher.fetch(doi, no_scihub=no_scihub)
+                            if result.success:
+                                target_dir = config.papers_dir / metadata.citekey
+                                target_dir.mkdir(parents=True, exist_ok=True)
+                                target_pdf = target_dir / f"{metadata.citekey}.pdf"
+                                await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
+                        else:
+                            console.print("[yellow]User declined Serpapi[/yellow]")
+                    else:
+                        console.print("[yellow]All sources failed, no Serpapi key available[/yellow]")
+                elif serpapi_policy == SerpapiPolicy.auto:
+                    if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
+                        console.print("[yellow]Trying Serpapi...[/yellow]")
                         fetcher.serpapi = None
-                        result = await fetcher.fetch(doi)
+                        result = await fetcher.fetch(doi, no_scihub=no_scihub)
                         if result.success:
                             target_dir = config.papers_dir / metadata.citekey
                             target_dir.mkdir(parents=True, exist_ok=True)
                             target_pdf = target_dir / f"{metadata.citekey}.pdf"
                             await fetcher.download_pdf_to_file(result.pdf_url, target_pdf)
-                else:
-                    console.print("[yellow]All sources failed, no Serpapi key available[/yellow]")
+                        else:
+                            console.print(f"[yellow]Serpapi also failed: {result.error}[/yellow]")
+                    else:
+                        console.print("[yellow]All sources failed, no Serpapi key available[/yellow]")
 
             finally:
                 await extractor.close()
@@ -225,100 +275,103 @@ def extract(
         run_async(run_fetch_single())
         return
 
-    # Process batch (normal workflow)
-    console.print(f"[green]Processing {len(inputs)} input(s)...[/green]")
+    # Normal workflow: title/DOI/PDF extraction
+    else:
+        console.print(f"[green]Processing {len(inputs)} input(s)...[/green]")
 
-    # For single input without --serpapi, handle SerpapiSearchNeeded with user prompt
-    single_input_mode = len(inputs) == 1 and not serpapi
+        # Determine use_serpapi for batch
+        # deny: never use Serpapi
+        # ask: only valid for single input (prompt user)
+        # auto: use Serpapi automatically
+        single_input_mode = len(inputs) == 1
+        use_serpapi_in_batch = serpapi_policy == SerpapiPolicy.auto
 
-    async def run_extraction():
-        if single_input_mode:
-            # Single input: handle SerpapiSearchNeeded with user confirmation
-            input_item, provided_doi, provided_title = inputs[0]
-            input_path = Path(input_item)
+        async def run_extraction():
+            if single_input_mode and serpapi_policy == SerpapiPolicy.ask:
+                # Single input with 'ask' policy: handle SerpapiSearchNeeded with user confirmation
+                input_item, provided_doi, provided_title = inputs[0]
+                input_path = Path(input_item)
 
-            try:
-                if input_path.suffix.lower() == ".pdf" and input_path.exists():
-                    if provided_doi:
-                        metadata = await extractor.extract_from_doi(provided_doi)
-                    elif provided_title:
-                        metadata = await extractor.extract_from_title(provided_title)
+                try:
+                    if input_path.suffix.lower() == ".pdf" and input_path.exists():
+                        if provided_doi:
+                            metadata = await extractor.extract_from_doi(provided_doi)
+                        elif provided_title:
+                            metadata = await extractor.extract_from_title(provided_title)
+                        else:
+                            metadata = await extractor.extract_from_pdf(input_path, use_ai=ai_extract)
+                        file_handler.organize_pdf(input_path, metadata, copy=copy)
+
+                    elif input_path.exists():
+                        raise MetadataNotFoundError(f"Unsupported file type: {input_path}")
+
+                    elif provided_doi or is_doi(input_item):
+                        doi = provided_doi or input_item
+                        metadata = await extractor.extract_from_doi(doi)
+
                     else:
-                        metadata = await extractor.extract_from_pdf(input_path, use_ai=ai_extract)
-                    file_handler.organize_pdf(input_path, metadata, copy=copy)
+                        title = provided_title or input_item
+                        metadata = await extractor.extract_from_title(title)
 
-                elif input_path.exists():
-                    raise MetadataNotFoundError(f"Unsupported file type: {input_path}")
+                    await extractor.close()
+                    return BatchResult(succeeded=[{
+                        "input": input_item,
+                        "citekey": metadata.citekey,
+                        "doi": metadata.doi,
+                        "metadata": metadata.to_dict(),
+                    }])
 
-                elif provided_doi or is_doi(input_item):
-                    doi = provided_doi or input_item
-                    metadata = await extractor.extract_from_doi(doi)
+                except SerpapiSearchNeeded as e:
+                    await extractor.close()
+                    console.print(f"\n[yellow]{e.message}[/yellow]")
 
-                else:
-                    title = provided_title or input_item
-                    metadata = await extractor.extract_from_title(title)
-
-                await extractor.close()
-                return BatchResult(succeeded=[{
-                    "input": input_item,
-                    "citekey": metadata.citekey,
-                    "doi": metadata.doi,
-                    "metadata": metadata.to_dict(),
-                }])
-
-            except SerpapiSearchNeeded as e:
-                # Ask user for Serpapi confirmation
-                await extractor.close()
-                console.print(f"\n[yellow]{e.message}[/yellow]")
-
-                if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
-                    if Confirm.ask("Use Serpapi (Google Scholar)?"):
-                        # Re-extract with Serpapi
-                        extractor2 = MetadataExtractor(config)
-                        try:
-                            if input_path.suffix.lower() == ".pdf" and input_path.exists():
-                                metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
-                                file_handler.organize_pdf(input_path, metadata, copy=copy)
-                            else:
-                                metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
-                            await extractor2.close()
-                            return BatchResult(succeeded=[{
-                                "input": input_item,
-                                "citekey": metadata.citekey,
-                                "doi": metadata.doi,
-                                "metadata": metadata.to_dict(),
-                            }])
-                        except Exception as e2:
-                            await extractor2.close()
+                    if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
+                        if Confirm.ask("Use Serpapi (Google Scholar)?"):
+                            extractor2 = MetadataExtractor(config)
+                            try:
+                                if input_path.suffix.lower() == ".pdf" and input_path.exists():
+                                    metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
+                                    file_handler.organize_pdf(input_path, metadata, copy=copy)
+                                else:
+                                    metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
+                                await extractor2.close()
+                                return BatchResult(succeeded=[{
+                                    "input": input_item,
+                                    "citekey": metadata.citekey,
+                                    "doi": metadata.doi,
+                                    "metadata": metadata.to_dict(),
+                                }])
+                            except Exception as e2:
+                                await extractor2.close()
+                                return BatchResult(failed=[{
+                                    "input": input_item,
+                                    "error": str(e2),
+                                }])
+                        else:
                             return BatchResult(failed=[{
                                 "input": input_item,
-                                "error": str(e2),
+                                "error": "User declined Serpapi",
                             }])
                     else:
                         return BatchResult(failed=[{
                             "input": input_item,
-                            "error": "User declined Serpapi",
+                            "error": "Serpapi requires SERPAPI_API_KEY",
                         }])
-                else:
+
+                except Exception as e:
+                    await extractor.close()
                     return BatchResult(failed=[{
                         "input": input_item,
-                        "error": "Serpapi requires SERPAPI_API_KEY",
+                        "error": str(e),
                     }])
 
-            except Exception as e:
+            else:
+                # Batch mode or 'deny'/'auto' policy
+                results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=use_serpapi_in_batch)
                 await extractor.close()
-                return BatchResult(failed=[{
-                    "input": input_item,
-                    "error": str(e),
-                }])
+                return results
 
-        else:
-            # Batch mode: use --serpapi flag to control Serpapi usage
-            results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=serpapi)
-            await extractor.close()
-            return results
-
-    results = run_async(run_extraction())
+        results = run_async(run_extraction())
 
     # Output results
     if results.succeeded:

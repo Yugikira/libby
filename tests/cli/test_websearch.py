@@ -223,7 +223,7 @@ def test_websearch_output_file():
 
 
 def test_websearch_no_serpapi():
-    """Test --no-serpapi skips Serpapi search."""
+    """Test --serpapi deny skips Serpapi search."""
     with patch("libby.cli.websearch.WebSearcher") as mock_searcher_cls:
         mock_searcher = MagicMock()
         mock_searcher.search = AsyncMock(return_value=MagicMock(
@@ -240,7 +240,7 @@ def test_websearch_no_serpapi():
         result = runner.invoke(app, [
             "websearch",
             "test query",
-            "--no-serpapi",
+            "--serpapi", "deny",
             "--no-env-check",
         ])
 

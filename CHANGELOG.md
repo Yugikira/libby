@@ -2,6 +2,21 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.5.0] - 2026-04-13
+
+### Changed
+- **Unified --serpapi parameter across all commands**
+  - Values: `deny` (default), `ask`, `auto`
+  - `deny`: Never use Serpapi (safest for quota)
+  - `ask`: Prompt user for confirmation (single input only)
+  - `auto`: Auto-use Serpapi without confirmation (batch mode)
+  - `--source serpapi`: Bypasses all policies and uses Serpapi directly
+  - Replaced `--no-serpapi` flag with `--serpapi deny` in websearch
+  - Removed ad-hoc Serpapi confirmation in fetch; now controlled by policy
+
+### Removed
+- **`--no-serpapi` flag in websearch**: Use `--serpapi deny` instead
+
 ## [0.4.5] - 2026-04-13
 
 ### Added

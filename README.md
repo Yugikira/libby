@@ -186,8 +186,10 @@ echo "10.1007/s11142-016-9368-9" | libby extract
 cat dois.txt | libby extract
 echo "scanned.pdf|10.1234/doi" | libby extract
 
-# Use Serpapi in batch mode (skip user confirmation)
-libby extract "paper title" --serpapi
+# Serpapi usage policies
+libby extract "paper title" --serpapi deny   # Never use Serpapi (default)
+libby extract "paper title" --serpapi ask    # Prompt for confirmation
+libby extract "paper title" --serpapi auto   # Auto-use without prompt
 
 # Fetch PDF by DOI
 libby fetch 10.1007/s11142-016-9368-9
@@ -322,7 +324,11 @@ libby fetch doi --source serpapi  # Direct Serpapi search
 
 **Sci-hub Fallback**: Automatic Selenium WebDriver when aiohttp fails (blocked/CAPTCHA). Requires Chrome browser.
 
-**Serpapi**: Google Scholar search for PDF links (uses API quota, requires confirmation in cascade mode).
+**Serpapi policy**: Control Serpapi usage with `--serpapi deny|ask|auto`:
+- `deny` (default): Never use Serpapi
+- `ask`: Prompt user for confirmation
+- `auto`: Auto-use Serpapi without confirmation
+- `--source serpapi`: Bypass policy, use Serpapi directly
 
 ## Title Search Cascade (extract)
 
@@ -334,16 +340,16 @@ When extracting by title, libby cascades through sources:
 2. **Semantic Scholar** (free): AI paper database with abstracts
 3. **Serpapi** (uses quota): Google Scholar with BibTeX fetching
 
-**Serpapi behavior**:
-- Single input: Prompts user for confirmation
-- Batch mode: Use `--serpapi` flag to auto-enable without prompts
-
+**Serpapi policy**: `--serpapi deny|ask|auto` (default: deny)
 ```bash
-# Single title - prompts for Serpapi if Crossref/S2 fail
-libby extract "paper title not in crossref"
+# Single title - prompts for Serpapi if Crossref/S2 fail (with --serpapi ask)
+libby extract "paper title not in crossref" --serpapi ask
 
 # Batch mode - auto-use Serpapi
-libby extract --batch titles.txt --serpapi
+libby extract --batch titles.txt --serpapi auto
+
+# Direct Serpapi search (bypasses cascade)
+libby extract "paper title" --source serpapi
 ```
 
 ## Scanned PDF Support
@@ -382,7 +388,8 @@ echo "scanned.pdf|10.1234/doi" | libby extract
 
 **Optional source:**
 - Serpapi: Controlled Google Scholar (max 5 pages, BibTeX fetch)
-  - `--no-serpapi` to skip and save quota
+  - `--serpapi deny` to skip and save quota (default)
+  - `--serpapi auto` to auto-enable
   - `--source serpapi` to use only Serpapi
 
 **Single source mode:**

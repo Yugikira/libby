@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,7 @@ from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
 from libby.output.bibtex import BibTeXFormatter
 from libby.models.fetch_result import FetchResult
 from libby.cli.utils import read_stdin_lines
+from libby.cli.serpapi_policy import SerpapiPolicy, parse_serpapi_policy, SERPAPI_POLICY_HELP
 
 console = Console()
 
@@ -30,6 +32,7 @@ def fetch(
     source: Optional[str] = typer.Option(None, "--source", "-s", help="Use specific source only (crossref, unpaywall, s2, core, arxiv, pmc, biorxiv, scihub, serpapi)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show PDF URL without downloading"),
     no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub source"),
+    serpapi: str = typer.Option("deny", "--serpapi", help=SERPAPI_POLICY_HELP),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
     no_env_check: bool = typer.Option(False, "--no-env-check", help="Skip environment check"),
 ):
@@ -45,6 +48,13 @@ def fetch(
     Each source: get URL -> try download -> if fail, continue to next.
     Sci-hub: aiohttp -> Selenium fallback if blocked.
 
+    --serpapi policy (when cascade reaches Serpapi):
+        - deny: Do not use Serpapi (default)
+        - ask: Prompt user for confirmation
+        - auto: Auto-use Serpapi without confirmation
+
+    --source serpapi: Bypass cascade and policy, use Serpapi directly.
+
     Examples:
         libby fetch 10.1007/s11142-016-9368-9
         libby fetch --batch dois.txt
@@ -52,9 +62,17 @@ def fetch(
         libby fetch 10.1234/abc --source unpaywall
         libby fetch 10.1234/abc --source scihub
         libby fetch 10.1234/abc --dry-run
+        libby fetch 10.1234/abc --serpapi auto
     """
     if not no_env_check:
         check_env_vars()
+
+    # Parse serpapi policy
+    try:
+        serpapi_policy = parse_serpapi_policy(serpapi)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
 
     config = load_config(config_path)
 
@@ -71,7 +89,7 @@ def fetch(
         raise typer.Exit(1)
 
     async def run_fetch():
-        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source, output_dir)
+        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source, output_dir, serpapi_policy)
 
     results = asyncio.run(run_fetch())
     _display_results(results, dry_run)
@@ -104,12 +122,14 @@ async def _process_batch_fetch(
     no_scihub: bool,
     source: Optional[str] = None,
     output_dir: Optional[Path] = None,
+    serpapi_policy: SerpapiPolicy = SerpapiPolicy.deny,
 ) -> list:
     """Process batch of DOIs.
 
     Args:
         source: If specified, use only this source (skip cascade)
         output_dir: Override papers directory (optional)
+        serpapi_policy: Policy for Serpapi usage (deny, ask, auto)
     """
 
     extractor = MetadataExtractor(config)
@@ -206,6 +226,7 @@ async def _process_batch_fetch(
                 console.print(f"\n[yellow]DOI {doi}: All free sources failed[/yellow]")
                 console.print(e.message)
 
+                # Handle based on serpapi_policy
                 if no_scihub:
                     results.append(FetchResult(
                         doi=doi,
@@ -217,19 +238,68 @@ async def _process_batch_fetch(
                         bib_path=target_bib,
                         metadata=metadata.to_dict(),
                     ))
-                elif config.get_serpapi_api_key():
-                    if Confirm.ask("Use Serpapi?"):
+                elif serpapi_policy == SerpapiPolicy.deny:
+                    results.append(FetchResult(
+                        doi=doi,
+                        success=False,
+                        source=None,
+                        pdf_url=None,
+                        error="All sources failed. Use --serpapi ask or auto to try Serpapi.",
+                        source_attempts=e.source_attempts,
+                        bib_path=target_bib,
+                        metadata=metadata.to_dict(),
+                    ))
+                elif serpapi_policy == SerpapiPolicy.ask:
+                    if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
+                        console.print(e.message)
+                        if Confirm.ask("Use Serpapi?"):
+                            fetcher.serpapi = None
+                            # Use temp path for Serpapi result
+                            result = await fetcher.fetch(doi)
+                            if result.success and result.pdf_path:
+                                # Move to target location
+                                target_pdf = target_dir / f"{metadata.citekey}.pdf"
+                                shutil.move(str(result.pdf_path), str(target_pdf))
+                                result.pdf_path = target_pdf
+                                result.bib_path = target_bib
+                            else:
+                                result.bib_path = target_bib
+                            results.append(result)
+                        else:
+                            results.append(FetchResult(
+                                doi=doi,
+                                success=False,
+                                source=None,
+                                pdf_url=None,
+                                error="User declined Serpapi",
+                                source_attempts=e.source_attempts,
+                                bib_path=target_bib,
+                                metadata=metadata.to_dict(),
+                            ))
+                    else:
+                        results.append(FetchResult(
+                            doi=doi,
+                            success=False,
+                            source=None,
+                            pdf_url=None,
+                            error="All sources failed, no Serpapi key available",
+                            source_attempts=e.source_attempts,
+                            bib_path=target_bib,
+                            metadata=metadata.to_dict(),
+                        ))
+                elif serpapi_policy == SerpapiPolicy.auto:
+                    if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
+                        console.print("[yellow]Trying Serpapi...[/yellow]")
                         fetcher.serpapi = None
-                        # Use temp path for Serpapi result
                         result = await fetcher.fetch(doi)
                         if result.success and result.pdf_path:
-                            # Move to target location
                             target_pdf = target_dir / f"{metadata.citekey}.pdf"
                             shutil.move(str(result.pdf_path), str(target_pdf))
                             result.pdf_path = target_pdf
                             result.bib_path = target_bib
                         else:
                             result.bib_path = target_bib
+                            console.print(f"[yellow]Serpapi also failed: {result.error}[/yellow]")
                         results.append(result)
                     else:
                         results.append(FetchResult(
@@ -237,22 +307,11 @@ async def _process_batch_fetch(
                             success=False,
                             source=None,
                             pdf_url=None,
-                            error="User declined Serpapi",
+                            error="All sources failed, no Serpapi key available",
                             source_attempts=e.source_attempts,
                             bib_path=target_bib,
                             metadata=metadata.to_dict(),
                         ))
-                else:
-                    results.append(FetchResult(
-                        doi=doi,
-                        success=False,
-                        source=None,
-                        pdf_url=None,
-                        error="All sources failed, no Serpapi key available",
-                        source_attempts=e.source_attempts,
-                        bib_path=target_bib,
-                        metadata=metadata.to_dict(),
-                    ))
 
             except Exception as e:
                 progress.remove_task(task)
