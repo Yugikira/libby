@@ -1,6 +1,7 @@
 """libby fetch command."""
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -144,30 +145,64 @@ async def _process_batch_fetch(
                 else:
                     if dry_run:
                         # Dry run: just get URL, don't download
-                        result = await fetcher.fetch(doi)
+                        result = await fetcher.fetch(doi, no_scihub=no_scihub)
                         result.pdf_path = None
                     else:
-                        result = await fetcher.fetch(doi, target_pdf)
+                        result = await fetcher.fetch(doi, target_pdf, no_scihub=no_scihub)
 
-                # Step 4: Organize files
+                # Step 4: Organize files (always save bib, save attempts on failure)
+                target_bib = target_dir / f"{metadata.citekey}.bib"
+                target_bib.write_text(BibTeXFormatter().format(metadata))
+
                 if result.success and not dry_run:
                     # PDF already downloaded by fetcher to target_pdf
-                    # Just need to save BibTeX
-                    target_bib = target_dir / f"{metadata.citekey}.bib"
-                    target_bib.write_text(BibTeXFormatter().format(metadata))
-
                     result.pdf_path = target_pdf
                     result.bib_path = target_bib
                     result.metadata = metadata.to_dict()
 
-                progress.update(task, description=f"[green]Done: {metadata.citekey}[/green]")
+                    progress.update(task, description=f"[green]Done: {metadata.citekey}[/green]")
+                else:
+                    # Save source attempts JSON on failure
+                    if result.source_attempts:
+                        attempts_file = target_dir / f"{metadata.citekey}_attempts.json"
+                        attempts_data = {
+                            "doi": doi,
+                            "citekey": metadata.citekey,
+                            "attempts": result.source_attempts,
+                            "found_urls": [a for a in result.source_attempts if a.get("url")],
+                        }
+                        attempts_file.write_text(json.dumps(attempts_data, indent=2))
+                        console.print(f"[yellow]Saved attempt log: {attempts_file}[/yellow]")
+
+                    result.bib_path = target_bib
+                    result.metadata = metadata.to_dict()
+                    progress.update(task, description=f"[red]Failed: {metadata.citekey}[/red]")
+
                 progress.remove_task(task)
                 results.append(result)
 
             except SerpapiConfirmationNeeded as e:
                 progress.remove_task(task)
 
+                # Save bib file first (metadata already extracted)
+                target_dir = config.papers_dir / metadata.citekey
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target_bib = target_dir / f"{metadata.citekey}.bib"
+                target_bib.write_text(BibTeXFormatter().format(metadata))
+
+                # Save source attempts JSON
+                if e.source_attempts:
+                    attempts_file = target_dir / f"{metadata.citekey}_attempts.json"
+                    attempts_data = {
+                        "doi": doi,
+                        "citekey": metadata.citekey,
+                        "attempts": e.source_attempts,
+                        "found_urls": [a for a in e.source_attempts if a.get("url")],
+                    }
+                    attempts_file.write_text(json.dumps(attempts_data, indent=2))
+
                 console.print(f"\n[yellow]DOI {doi}: All free sources failed[/yellow]")
+                console.print(e.message)
 
                 if no_scihub:
                     results.append(FetchResult(
@@ -176,22 +211,22 @@ async def _process_batch_fetch(
                         source=None,
                         pdf_url=None,
                         error="All sources failed, Sci-hub disabled by --no-scihub",
+                        source_attempts=e.source_attempts,
+                        bib_path=target_bib,
+                        metadata=metadata.to_dict(),
                     ))
-                elif os.getenv("SERPAPI_API_KEY"):
-                    console.print(SerpapiConfirmationNeeded(e.doi).message)
+                elif config.get_serpapi_api_key():
                     if Confirm.ask("Use Serpapi?"):
                         fetcher.serpapi = None
                         # Use temp path for Serpapi result
                         result = await fetcher.fetch(doi)
                         if result.success and result.pdf_path:
                             # Move to target location
-                            target_dir = config.papers_dir / metadata.citekey
-                            target_dir.mkdir(parents=True, exist_ok=True)
                             target_pdf = target_dir / f"{metadata.citekey}.pdf"
                             shutil.move(str(result.pdf_path), str(target_pdf))
-                            target_bib = target_dir / f"{metadata.citekey}.bib"
-                            target_bib.write_text(BibTeXFormatter().format(metadata))
                             result.pdf_path = target_pdf
+                            result.bib_path = target_bib
+                        else:
                             result.bib_path = target_bib
                         results.append(result)
                     else:
@@ -201,6 +236,9 @@ async def _process_batch_fetch(
                             source=None,
                             pdf_url=None,
                             error="User declined Serpapi",
+                            source_attempts=e.source_attempts,
+                            bib_path=target_bib,
+                            metadata=metadata.to_dict(),
                         ))
                 else:
                     results.append(FetchResult(
@@ -209,6 +247,9 @@ async def _process_batch_fetch(
                         source=None,
                         pdf_url=None,
                         error="All sources failed, no Serpapi key available",
+                        source_attempts=e.source_attempts,
+                        bib_path=target_bib,
+                        metadata=metadata.to_dict(),
                     ))
 
             except Exception as e:
@@ -246,6 +287,15 @@ def _display_results(results: list, dry_run: bool = False):
         console.print("\n[red]Failed:[/red]")
         for r in failed:
             console.print(f"  [red]{r.doi}[/red] - {r.error}")
+            # Show found URLs if available
+            if r.source_attempts:
+                found_urls = [a for a in r.source_attempts if a.get("url")]
+                if found_urls:
+                    console.print("  [yellow]PDF URLs found (but blocked):[/yellow]")
+                    for a in found_urls:
+                        console.print(f"    [yellow]{a['source']}:[/yellow] {a['url']}")
+            if r.bib_path:
+                console.print(f"  [blue]BibTeX saved:[/blue] {r.bib_path}")
 
     console.print(f"\n[green]Succeeded: {len(succeeded)}[/green]")
     console.print(f"[red]Failed: {len(failed)}[/red]")

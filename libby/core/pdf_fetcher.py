@@ -66,7 +66,7 @@ class PDFFetcher:
             self._scihub_downloader = ScihubDownloader(temp_dir)
         return self._scihub_downloader
 
-    async def fetch(self, doi: str, target_path: Path | None = None) -> FetchResult:
+    async def fetch(self, doi: str, target_path: Path | None = None, no_scihub: bool = False) -> FetchResult:
         """Fetch PDF through cascade with download verification.
 
         Each source: get URL → attempt download → if fail, continue to next.
@@ -74,6 +74,7 @@ class PDFFetcher:
         Args:
             doi: Paper DOI
             target_path: Target PDF path (optional, creates temp if not provided)
+            no_scihub: Skip Sci-hub source (default: False)
 
         Returns:
             FetchResult with pdf_path if downloaded, pdf_url if URL only
@@ -82,6 +83,9 @@ class PDFFetcher:
         external_ids = {}
         last_error = None
         last_source = None
+
+        # Track all source attempts for detailed failure report
+        source_attempts = []
 
         # Create temp path if not provided
         if target_path is None:
@@ -93,14 +97,19 @@ class PDFFetcher:
         pdf_url, meta = await self.crossref.get_oa_link(doi)
         if pdf_url:
             metadata.update(meta)
+            source_attempts.append({"source": "crossref_oa", "url": pdf_url, "status": "found"})
             if await self._try_download(pdf_url, target_path):
                 return FetchResult(
                     doi=doi, success=True, source="crossref_oa",
                     pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
                 )
+            source_attempts[-1]["status"] = "download_failed"
+            source_attempts[-1]["error"] = "Download failed (possibly blocked/CAPTCHA)"
             logger.warning("Crossref OA download failed, continuing cascade...")
             last_error = "Crossref OA download failed"
             last_source = "crossref_oa"
+        else:
+            source_attempts.append({"source": "crossref_oa", "url": None, "status": "not_found"})
 
         # Get external_ids from S2 early (needed for arxiv/PMC)
         _, _, external_ids = await self.s2.get_pdf_url(doi)
@@ -110,114 +119,161 @@ class PDFFetcher:
             pdf_url, meta = await self.unpaywall.get_pdf_url(doi, self.config.get_email())
             if pdf_url:
                 metadata.update(meta)
+                source_attempts.append({"source": "unpaywall", "url": pdf_url, "status": "found"})
                 if await self._try_download(pdf_url, target_path):
                     return FetchResult(
                         doi=doi, success=True, source="unpaywall",
-                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                        source_attempts=source_attempts
                     )
+                source_attempts[-1]["status"] = "download_failed"
+                source_attempts[-1]["error"] = "Download failed (possibly blocked)"
                 logger.warning("Unpaywall download failed, continuing cascade...")
                 last_error = "Unpaywall download failed"
                 last_source = "unpaywall"
+        else:
+            source_attempts.append({"source": "unpaywall", "url": None, "status": "skipped", "error": "EMAIL not set"})
 
         # 3. Semantic Scholar
         pdf_url, meta, _ = await self.s2.get_pdf_url(doi)
         if pdf_url:
             metadata.update(meta)
+            source_attempts.append({"source": "semantic_scholar", "url": pdf_url, "status": "found"})
             if await self._try_download(pdf_url, target_path):
                 return FetchResult(
                     doi=doi, success=True, source="semantic_scholar",
-                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                    source_attempts=source_attempts
                 )
+            source_attempts[-1]["status"] = "download_failed"
+            source_attempts[-1]["error"] = "Download failed (possibly blocked/CAPTCHA/Cloudflare)"
             logger.warning("Semantic Scholar download failed, continuing cascade...")
             last_error = "Semantic Scholar download failed"
             last_source = "semantic_scholar"
+        else:
+            source_attempts.append({"source": "semantic_scholar", "url": None, "status": "not_found"})
 
         # 4. CORE.ac.uk (institutional repositories)
         pdf_url, meta = await self.core.get_pdf_url(doi)
         if pdf_url:
             metadata.update(meta)
+            source_attempts.append({"source": "core", "url": pdf_url, "status": "found"})
             if await self._try_download(pdf_url, target_path):
                 return FetchResult(
                     doi=doi, success=True, source="core",
-                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                    source_attempts=source_attempts
                 )
+            source_attempts[-1]["status"] = "download_failed"
+            source_attempts[-1]["error"] = "Download failed"
             logger.warning("CORE download failed, continuing cascade...")
             last_error = "CORE download failed"
             last_source = "core"
+        else:
+            source_attempts.append({"source": "core", "url": None, "status": "not_found"})
 
         # 5. arXiv (via external_ids)
         if external_ids.get("ArXiv"):
             pdf_url = self._arxiv.get_pdf_url(external_ids["ArXiv"])
+            source_attempts.append({"source": "arxiv", "url": pdf_url, "status": "found"})
             if pdf_url and await self._try_download(pdf_url, target_path):
                 return FetchResult(
                     doi=doi, success=True, source="arxiv",
-                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                    source_attempts=source_attempts
                 )
+            source_attempts[-1]["status"] = "download_failed"
+            source_attempts[-1]["error"] = "Download failed"
             logger.warning("arXiv download failed, continuing cascade...")
             last_error = "arXiv download failed"
             last_source = "arxiv"
+        else:
+            source_attempts.append({"source": "arxiv", "url": None, "status": "not_found", "error": "No ArXiv ID in external_ids"})
 
         # 6. PMC (via external_ids)
         if external_ids.get("PubMedCentral"):
             pdf_url = self._pmc.get_pdf_url(external_ids["PubMedCentral"])
+            source_attempts.append({"source": "pmc", "url": pdf_url, "status": "found"})
             if pdf_url and await self._try_download(pdf_url, target_path):
                 return FetchResult(
                     doi=doi, success=True, source="pmc",
-                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                    source_attempts=source_attempts
                 )
+            source_attempts[-1]["status"] = "download_failed"
+            source_attempts[-1]["error"] = "Download failed"
             logger.warning("PMC download failed, continuing cascade...")
             last_error = "PMC download failed"
             last_source = "pmc"
+        else:
+            source_attempts.append({"source": "pmc", "url": None, "status": "not_found", "error": "No PubMedCentral ID in external_ids"})
 
         # 7. bioRxiv
         pdf_url = await self.biorxiv.get_pdf_url(doi)
         if pdf_url:
+            source_attempts.append({"source": "biorxiv", "url": pdf_url, "status": "found"})
             if await self._try_download(pdf_url, target_path):
                 return FetchResult(
                     doi=doi, success=True, source="biorxiv",
-                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
+                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                    source_attempts=source_attempts
                 )
+            source_attempts[-1]["status"] = "download_failed"
+            source_attempts[-1]["error"] = "Download failed"
             logger.warning("bioRxiv download failed, continuing cascade...")
             last_error = "bioRxiv download failed"
             last_source = "biorxiv"
+        else:
+            source_attempts.append({"source": "biorxiv", "url": None, "status": "not_found", "error": "DOI not from bioRxiv/medRxiv"})
 
-        # 8. Sci-hub: aiohttp → Selenium
-        pdf_url, error = await self.scihub.get_pdf_url(doi)
-        if pdf_url:
-            if await self._try_download(pdf_url, target_path):
-                return FetchResult(
-                    doi=doi, success=True, source="scihub",
-                    pdf_url=pdf_url, pdf_path=target_path, metadata=metadata
-                )
-            logger.warning("Sci-hub aiohttp download failed")
+        # 8. Sci-hub: aiohttp → Selenium (skip if no_scihub)
+        if not no_scihub:
+            pdf_url, error = await self.scihub.get_pdf_url(doi)
+            if pdf_url:
+                source_attempts.append({"source": "scihub", "url": pdf_url, "status": "found"})
+                if await self._try_download(pdf_url, target_path):
+                    return FetchResult(
+                        doi=doi, success=True, source="scihub",
+                        pdf_url=pdf_url, pdf_path=target_path, metadata=metadata,
+                        source_attempts=source_attempts
+                    )
+                source_attempts[-1]["status"] = "download_failed"
+                source_attempts[-1]["error"] = "Aiohttp download failed"
+                logger.warning("Sci-hub aiohttp download failed")
 
-        # Sci-hub Selenium fallback
-        try:
-            downloader = self._get_selenium_downloader()
-            pdf_path, selenium_error = downloader.download_pdf(doi)
-            if pdf_path and pdf_path.exists():
-                # Move to target path
-                shutil.move(str(pdf_path), str(target_path))
-                return FetchResult(
-                    doi=doi, success=True, source="scihub_selenium",
-                    pdf_url=target_path.as_uri(), pdf_path=target_path, metadata=metadata
-                )
-            last_error = selenium_error or "Sci-hub Selenium failed"
-            last_source = "scihub"
-        except Exception as e:
-            logger.warning(f"Sci-hub Selenium error: {e}")
-            last_error = str(e)
-            last_source = "scihub"
+            # Sci-hub Selenium fallback
+            try:
+                downloader = self._get_selenium_downloader()
+                pdf_path, selenium_error = downloader.download_pdf(doi)
+                if pdf_path and pdf_path.exists():
+                    # Move to target path
+                    shutil.move(str(pdf_path), str(target_path))
+                    return FetchResult(
+                        doi=doi, success=True, source="scihub_selenium",
+                        pdf_url=target_path.as_uri(), pdf_path=target_path, metadata=metadata,
+                        source_attempts=source_attempts
+                    )
+                source_attempts.append({"source": "scihub_selenium", "url": None, "status": "download_failed", "error": selenium_error or "Selenium failed"})
+                last_error = selenium_error or "Sci-hub Selenium failed"
+                last_source = "scihub"
+            except Exception as e:
+                source_attempts.append({"source": "scihub_selenium", "url": None, "status": "error", "error": str(e)})
+                logger.warning(f"Sci-hub Selenium error: {e}")
+                last_error = str(e)
+                last_source = "scihub"
+        else:
+            source_attempts.append({"source": "scihub", "url": None, "status": "skipped", "error": "Disabled by --no-scihub"})
 
         # 9. Serpapi (raises exception for user confirmation)
         if self.serpapi:
-            raise SerpapiConfirmationNeeded(doi)
+            raise SerpapiConfirmationNeeded(doi, source_attempts)
 
         # All sources failed
         error_msg = last_error or "No PDF found from any source"
         return FetchResult(
             doi=doi, success=False, source=last_source,
-            pdf_url=None, error=error_msg, metadata=metadata
+            pdf_url=None, error=error_msg, metadata=metadata,
+            source_attempts=source_attempts
         )
 
     async def _try_download(self, pdf_url: str, target_path: Path) -> bool:

@@ -17,6 +17,7 @@ class FetchResult:
     bib_path: Path | None = None
     metadata: dict | None = field(default_factory=dict)
     error: str | None = None
+    source_attempts: list[dict] = field(default_factory=list)  # Detailed cascade log
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -29,4 +30,5 @@ class FetchResult:
             "bib_path": str(self.bib_path) if self.bib_path else None,
             "metadata": self.metadata,
             "error": self.error,
+            "source_attempts": self.source_attempts,
         }

@@ -16,13 +16,26 @@ class SerpapiConfirmationNeeded(Exception):
     All free sources failed, user must confirm API usage.
     """
 
-    def __init__(self, doi: str):
+    def __init__(self, doi: str, source_attempts: list[dict] = None):
         self.doi = doi
-        self.message = (
-            "All free sources failed to find PDF.\n"
-            "Serpapi Google Scholar is available but uses API quota.\n"
-            "Do you want to try Serpapi? (y/n)"
-        )
+        self.source_attempts = source_attempts or []
+        # Generate detailed message with URLs found
+        found_urls = [a for a in self.source_attempts if a.get("url")]
+        if found_urls:
+            url_list = "\n".join([f"  - {a['source']}: {a['url']}" for a in found_urls])
+            self.message = (
+                f"All free sources failed to download PDF.\n"
+                f"PDF URLs found but blocked:\n{url_list}\n"
+                f"You may try downloading manually.\n"
+                f"Serpapi Google Scholar is available but uses API quota.\n"
+                f"Do you want to try Serpapi? (y/n)"
+            )
+        else:
+            self.message = (
+                "All free sources failed to find PDF.\n"
+                "Serpapi Google Scholar is available but uses API quota.\n"
+                "Do you want to try Serpapi? (y/n)"
+            )
 
 
 class SerpapiAPI(AsyncAPIClient):

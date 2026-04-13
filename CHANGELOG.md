@@ -2,6 +2,23 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.4.4] - 2026-04-13
+
+### Added
+- **Detailed failure reporting for fetch**
+  - `source_attempts` tracking: each source URL, status, and error
+  - `_attempts.json` file saved on failure with all cascade attempts
+  - Display found URLs that were blocked (helps manual download)
+- **Always save `.bib` file**: even when PDF download fails (metadata already extracted)
+
+### Changed
+- **`--no-scihub` now correctly skips Sci-hub in cascade** (previously still attempted)
+
+### Fixed
+- Remove punctuation from title words in citekey formatting
+- Close serpapi session in PDFFetcher.close()
+- `SerpapiConfirmationNeeded` message shows found URLs
+
 ## [0.4.3] - 2026-04-13
 
 ### Added
