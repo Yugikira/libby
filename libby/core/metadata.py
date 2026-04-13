@@ -120,9 +120,17 @@ class MetadataExtractor:
         raise SerpapiSearchNeeded(title)
 
     async def _extract_from_serpapi(self, title: str) -> BibTeXMetadata:
-        """Extract metadata from Serpapi (Google Scholar)."""
+        """Extract metadata from Serpapi (Google Scholar) with BibTeX fetching.
+
+        Flow:
+        1. Search Serpapi → get raw results with serpapi_cite_link
+        2. Get BibTeX via serpapi_cite_link → complete metadata
+        3. Parse BibTeX to BibTeXMetadata
+
+        If BibTeX fails, fallback to _parse_serpapi (basic fields only).
+        """
         from libby.api.serpapi import SerpapiAPI
-        from libby.core.websearch import WebSearcher
+        from libby.models.search_result import parse_bibtex
 
         api_key = self.config.get_serpapi_api_key()
         if not api_key:
@@ -133,7 +141,8 @@ class MetadataExtractor:
 
         serpapi = SerpapiAPI()
         try:
-            # Search Serpapi
+            # Step 1: Search Serpapi
+            logger.debug(f"Searching Serpapi for: {title}")
             raw_results, quota_reached = await serpapi.search(
                 query=title, api_key=api_key, max_pages=1
             )
@@ -144,24 +153,73 @@ class MetadataExtractor:
             if not raw_results:
                 raise MetadataNotFoundError(f"Title not found in Serpapi: {title}")
 
-            # Use WebSearcher's _parse_serpapi method
-            searcher = WebSearcher(self.config)
-            search_result = searcher._parse_serpapi(raw_results[0])
+            first_result = raw_results[0]
 
-            # Convert SearchResult to BibTeXMetadata
-            metadata = BibTeXMetadata(
-                doi=search_result.doi,
-                title=search_result.title,
-                author=search_result.author or [],
-                year=search_result.year,
-                journal=search_result.journal,
-                volume=search_result.volume,
-                number=search_result.number,
-                pages=search_result.pages,
-                publisher=search_result.publisher,
-                abstract=search_result.abstract,
-                url=search_result.url,
-            )
+            # Step 2: Get BibTeX via serpapi_cite_link
+            inline_links = first_result.get("inline_links") or {}
+            serpapi_cite_link = inline_links.get("serpapi_cite_link")
+
+            bibtex_data = None
+            if serpapi_cite_link:
+                logger.debug(f"Fetching BibTeX via cite_link")
+                try:
+                    bibtex_str = await serpapi.get_bibtex(serpapi_cite_link, api_key)
+                    if bibtex_str:
+                        bibtex_data = parse_bibtex(bibtex_str)
+                        logger.debug(f"BibTeX parsed: {bibtex_data.get('title')}")
+                except Exception as e:
+                    logger.warning(f"BibTeX fetch failed: {e}")
+
+            # Step 3: Create BibTeXMetadata
+            if bibtex_data:
+                # Full metadata from BibTeX
+                metadata = BibTeXMetadata(
+                    citekey="",  # Will be set by formatter
+                    entry_type=bibtex_data.get("entry_type", "article"),
+                    doi=bibtex_data.get("doi"),
+                    title=bibtex_data.get("title"),
+                    author=bibtex_data.get("author", []),
+                    year=bibtex_data.get("year"),
+                    journal=bibtex_data.get("journal"),
+                    volume=bibtex_data.get("volume"),
+                    number=bibtex_data.get("number"),
+                    pages=bibtex_data.get("pages"),
+                    publisher=bibtex_data.get("publisher"),
+                    url=bibtex_data.get("url"),
+                    abstract=bibtex_data.get("abstract"),
+                )
+            else:
+                # Fallback: parse basic fields from search result
+                logger.warning("BibTeX failed, using basic fields fallback")
+                pub_info = first_result.get("publication_info") or {}
+
+                # DOI from publication_info
+                doi = pub_info.get("doi")
+
+                # Authors
+                authors = []
+                for author_dict in (pub_info.get("authors") or []):
+                    name = author_dict.get("name")
+                    if name:
+                        authors.append(name)
+
+                # Year from summary
+                year = None
+                summary = pub_info.get("summary", "")
+                year_match = re.search(r'\b(19|20)\d{2}\b', summary)
+                if year_match:
+                    year = int(year_match.group())
+
+                metadata = BibTeXMetadata(
+                    citekey="",  # Will be set by formatter
+                    doi=doi,
+                    title=first_result.get("title"),
+                    author=authors,
+                    year=year,
+                    url=first_result.get("link"),
+                    abstract=first_result.get("snippet"),
+                )
+
             metadata.citekey = self.formatter.format(metadata)
             logger.info(f"Found in Serpapi: {metadata.citekey}")
             return metadata
