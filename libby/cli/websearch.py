@@ -40,7 +40,7 @@ def websearch(
     issn: Optional[str] = typer.Option(None, "--issn", help="ISSN filter"),
     source: Optional[str] = typer.Option(
         None, "--source", "-s",
-        help="Use specific source only (crossref, s2, scholarly, serpapi)"
+        help="Use specific source only (crossref, s2, serpapi)"
     ),
     serpapi: str = typer.Option("deny", "--serpapi", help=SERPAPI_POLICY_HELP),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
@@ -51,7 +51,7 @@ def websearch(
 
     DOI input triggers fetch -> extract fallback workflow.
 
-    Sources: Crossref, Semantic Scholar, Scholarly, Serpapi (optional)
+    Sources: Crossref, Semantic Scholar, Serpapi (optional)
 
     --serpapi policy:
         - deny: Do not use Serpapi (default)

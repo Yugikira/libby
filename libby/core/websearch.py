@@ -13,7 +13,6 @@ from libby.models.search_result import SearchResult, SearchResults, SerpapiExtra
 from libby.models.search_filter import SearchFilter
 from libby.api.crossref import CrossrefAPI
 from libby.api.semantic_scholar import SemanticScholarAPI
-from libby.api.scholarly import ScholarlyAPI
 from libby.api.serpapi import SerpapiAPI
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ class WebSearcher:
 
     Search flow:
     1. Journal resolution (venue ↔ ISSN via Crossref)
-    2. Crossref + Semantic Scholar + Scholarly in parallel (asyncio.gather)
+    2. Crossref + Semantic Scholar in parallel (asyncio.gather)
     3. Author filtering (post-filter for Crossref/S2)
     4. Serpapi separately (controlled usage, 5 pages)
     5. Merge results by DOI (keep longer values, fill missing fields)
@@ -36,7 +35,6 @@ class WebSearcher:
         self.console = Console()
         self.crossref = CrossrefAPI(mailto=config.get_email())
         self.s2 = SemanticScholarAPI(api_key=config.get_s2_api_key())
-        self.scholarly = ScholarlyAPI()
         self.serpapi = SerpapiAPI() if config.get_serpapi_api_key() else None
 
     async def search(
@@ -54,14 +52,14 @@ class WebSearcher:
             filter: Unified SearchFilter
             limit: Result count per source
             skip_serpapi: Skip Serpapi search (free sources only)
-            sources: List of specific sources to use (crossref, s2, scholarly, serpapi)
-                     If None, uses all free sources (crossref, s2, scholarly)
+            sources: List of specific sources to use (crossref, s2, serpapi)
+                     If None, uses all free sources (crossref, s2)
 
         Returns:
             SearchResults with merged results and serpapi_extra
         """
         # Valid source names
-        VALID_SOURCES = {"crossref", "s2", "scholarly", "serpapi"}
+        VALID_SOURCES = {"crossref", "s2", "serpapi"}
 
         # Determine which sources to use
         if sources:
@@ -72,13 +70,11 @@ class WebSearcher:
             sources = [s for s in sources if s in VALID_SOURCES]
             use_crossref = "crossref" in sources
             use_s2 = "s2" in sources
-            use_scholarly = "scholarly" in sources
             use_serpapi = "serpapi" in sources
         else:
             # Default: all free sources, serpapi needs explicit enable
             use_crossref = True
             use_s2 = True
-            use_scholarly = True
             use_serpapi = not skip_serpapi and self.serpapi is not None
 
         sources_used = []
@@ -105,10 +101,6 @@ class WebSearcher:
             parallel_tasks.append(self.s2.search(query, limit=limit, filter=filter))
             parallel_names.append("s2")
 
-        if use_scholarly:
-            parallel_tasks.append(self.scholarly.search(query, limit=limit, filter=filter))
-            parallel_names.append("scholarly")
-
         parallel_results = await asyncio.gather(
             *parallel_tasks,
             return_exceptions=True,  # Handle errors gracefully
@@ -117,7 +109,6 @@ class WebSearcher:
         # Process parallel results dynamically
         crossref_results: list[SearchResult] = []
         s2_results: list[SearchResult] = []
-        scholarly_results: list[SearchResult] = []
 
         for i, (name, result) in enumerate(zip(parallel_names, parallel_results)):
             if isinstance(result, Exception):
@@ -135,18 +126,14 @@ class WebSearcher:
             elif name == "s2":
                 for item in result:
                     s2_results.append(self._parse_s2(item))
-            elif name == "scholarly":
-                for item in result:
-                    scholarly_results.append(self._parse_scholarly(item))
 
         # 3. Author filtering (post-filter for Crossref and S2)
         if filter.author:
             crossref_results = self._filter_by_author(crossref_results, filter.author)
             s2_results = self._filter_by_author(s2_results, filter.author)
-            # Scholarly already handled in query
 
         # Combine all results
-        all_results = crossref_results + s2_results + scholarly_results
+        all_results = crossref_results + s2_results
 
         # 4. Merge by DOI
         merged_results = self._merge_by_doi(all_results)
@@ -318,35 +305,6 @@ class WebSearcher:
             pages=pages,
             abstract=item.get("abstract"),
             sources=["s2"],
-        )
-
-    def _parse_scholarly(self, item: dict) -> SearchResult:
-        """Parse Scholarly API result to SearchResult."""
-        bib = item.get("bib") or {}
-
-        # Year is string in scholarly
-        year = None
-        pub_year = bib.get("pub_year")
-        if pub_year:
-            try:
-                year = int(pub_year)
-            except ValueError:
-                pass
-
-        # Authors
-        authors = []
-        if item.get("author"):
-            if isinstance(item["author"], list):
-                authors = item["author"]
-            else:
-                authors = [item["author"]]
-
-        return SearchResult(
-            title=bib.get("title"),
-            author=authors,
-            year=year,
-            url=item.get("pub_url") or item.get("url_scholarbib"),
-            sources=["scholarly"],
         )
 
     def _parse_serpapi(self, item: dict) -> SearchResult:
@@ -678,6 +636,5 @@ class WebSearcher:
         """Close API sessions."""
         await self.crossref.close()
         await self.s2.close()
-        await self.scholarly.close()
         if self.serpapi:
             await self.serpapi.close()

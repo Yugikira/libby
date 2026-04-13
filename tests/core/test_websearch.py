@@ -63,29 +63,6 @@ def mock_s2_results():
 
 
 @pytest.fixture
-def mock_scholarly_results():
-    """Sample Scholarly API results."""
-    return [
-        {
-            "bib": {
-                "title": "Scholarly Paper",
-                "pub_year": "2023",
-            },
-            "author": ["Williams, Bob"],
-            "url_scholarbib": "https://scholar.google.com/scholar?q=10.1234/scholarly",
-        },
-        {
-            "bib": {
-                "title": "Merged Paper",
-                "pub_year": "2022",
-            },
-            "author": ["Jones, Alice"],
-            "pub_url": "https://example.com/paper",
-        },
-    ]
-
-
-@pytest.fixture
 def mock_serpapi_results():
     """Sample Serpapi API results."""
     return [
@@ -110,30 +87,26 @@ def mock_serpapi_results():
 
 
 @pytest.mark.asyncio
-async def test_search_parallel_execution(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
-    """Test that parallel search executes all three APIs concurrently."""
+async def test_search_parallel_execution(config, mock_crossref_results, mock_s2_results):
+    """Test that parallel search executes both APIs concurrently."""
     searcher = WebSearcher(config)
 
-    # Mock all three APIs
+    # Mock both APIs
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_crossref_results
-                mock_s2.return_value = mock_s2_results
-                mock_sch.return_value = mock_scholarly_results
+            mock_cr.return_value = mock_crossref_results
+            mock_s2.return_value = mock_s2_results
 
-                # Execute search (skip serpapi)
-                results = await searcher.search("test query", limit=10, skip_serpapi=True)
+            # Execute search (skip serpapi)
+            results = await searcher.search("test query", limit=10, skip_serpapi=True)
 
-                # Verify all three APIs were called
-                mock_cr.assert_called_once()
-                mock_s2.assert_called_once()
-                mock_sch.assert_called_once()
+            # Verify both APIs were called
+            mock_cr.assert_called_once()
+            mock_s2.assert_called_once()
 
-                # Verify sources used
-                assert "crossref" in results.sources_used
-                assert "semantic_scholar" in results.sources_used
-                assert "scholarly" in results.sources_used
+            # Verify sources used
+            assert "crossref" in results.sources_used
+            assert "s2" in results.sources_used
 
     await searcher.close()
 
@@ -146,37 +119,35 @@ async def test_merge_by_doi(config, mock_crossref_results, mock_s2_results):
     # Mock APIs with overlapping DOI
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_crossref_results
-                mock_s2.return_value = mock_s2_results
-                mock_sch.return_value = []  # No scholarly results
+            mock_cr.return_value = mock_crossref_results
+            mock_s2.return_value = mock_s2_results
 
-                results = await searcher.search("test query", skip_serpapi=True)
+            results = await searcher.search("test query", skip_serpapi=True)
 
-                # Find merged result
-                merged = None
-                for r in results.results:
-                    if r.doi == "10.1234/merged":
-                        merged = r
-                        break
+            # Find merged result
+            merged = None
+            for r in results.results:
+                if r.doi == "10.1234/merged":
+                    merged = r
+                    break
 
-                assert merged is not None
+            assert merged is not None
 
-                # Longer title should be kept (S2 has longer title)
-                assert merged.title == "Merged Paper: Extended Version"
+            # Longer title should be kept (S2 has longer title)
+            assert merged.title == "Merged Paper: Extended Version"
 
-                # Longer abstract should be kept (S2 has longer abstract)
-                assert "Semantic Scholar abstract" in merged.abstract
+            # Longer abstract should be kept (S2 has longer abstract)
+            assert "Semantic Scholar abstract" in merged.abstract
 
-                # Both sources should be tracked
-                assert "crossref" in merged.sources
-                assert "semantic_scholar" in merged.sources
+            # Both sources should be tracked
+            assert "crossref" in merged.sources
+            assert "s2" in merged.sources
 
     await searcher.close()
 
 
 @pytest.mark.asyncio
-async def test_serpapi_quota_reached(config, mock_crossref_results, mock_s2_results, mock_scholarly_results, mock_serpapi_results):
+async def test_serpapi_quota_reached(config, mock_crossref_results, mock_s2_results, mock_serpapi_results):
     """Test quota warning when Serpapi quota reached."""
     # Set SERPAPI_API_KEY environment variable for this test
     with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}):
@@ -189,24 +160,22 @@ async def test_serpapi_quota_reached(config, mock_crossref_results, mock_s2_resu
 
         with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
             with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-                with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                    with patch.object(searcher.serpapi, 'search', new_callable=AsyncMock) as mock_ser:
-                        mock_cr.return_value = mock_crossref_results
-                        mock_s2.return_value = mock_s2_results
-                        mock_sch.return_value = mock_scholarly_results
-                        # Quota reached returns results with quota_reached=True
-                        mock_ser.return_value = (mock_serpapi_results, True)
+                with patch.object(searcher.serpapi, 'search', new_callable=AsyncMock) as mock_ser:
+                    mock_cr.return_value = mock_crossref_results
+                    mock_s2.return_value = mock_s2_results
+                    # Quota reached returns results with quota_reached=True
+                    mock_ser.return_value = (mock_serpapi_results, True)
 
-                        results = await searcher.search("test query", skip_serpapi=False)
+                    results = await searcher.search("test query", skip_serpapi=False)
 
-                        # Quota warning should be shown
-                        mock_print.assert_called()
+                    # Quota warning should be shown
+                    mock_print.assert_called()
 
     await searcher.close()
 
 
 @pytest.mark.asyncio
-async def test_serpapi_disabled_when_no_key(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
+async def test_serpapi_disabled_when_no_key(config, mock_crossref_results, mock_s2_results):
     """Test that Serpapi is skipped when no API key."""
     # Remove SERPAPI_API_KEY from environment
     with patch.dict(os.environ, {"SERPAPI_API_KEY": ""}, clear=False):
@@ -215,40 +184,36 @@ async def test_serpapi_disabled_when_no_key(config, mock_crossref_results, mock_
 
         with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
             with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-                with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                    mock_cr.return_value = mock_crossref_results
-                    mock_s2.return_value = mock_s2_results
-                    mock_sch.return_value = mock_scholarly_results
+                mock_cr.return_value = mock_crossref_results
+                mock_s2.return_value = mock_s2_results
 
-                    results = await searcher.search("test query", skip_serpapi=False)
+                results = await searcher.search("test query", skip_serpapi=False)
 
-                    # Serpapi should not be in sources used
-                    assert "serpapi" not in results.sources_used
-                    assert len(results.serpapi_extra) == 0
+                # Serpapi should not be in sources used
+                assert "serpapi" not in results.sources_used
+                assert len(results.serpapi_extra) == 0
 
     await searcher.close()
 
 
 @pytest.mark.asyncio
-async def test_serpapi_creates_extra_info(config, mock_crossref_results, mock_s2_results, mock_scholarly_results, mock_serpapi_results):
+async def test_serpapi_creates_extra_info(config, mock_crossref_results, mock_s2_results, mock_serpapi_results):
     """Test Serpapi creates SerpapiExtraInfo for each result."""
     with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}):
         searcher = WebSearcher(config)
 
         with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
             with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-                with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                    with patch.object(searcher.serpapi, 'search', new_callable=AsyncMock) as mock_ser:
-                        mock_cr.return_value = mock_crossref_results
-                        mock_s2.return_value = mock_s2_results
-                        mock_sch.return_value = mock_scholarly_results
-                        mock_ser.return_value = (mock_serpapi_results, False)
+                with patch.object(searcher.serpapi, 'search', new_callable=AsyncMock) as mock_ser:
+                    mock_cr.return_value = mock_crossref_results
+                    mock_s2.return_value = mock_s2_results
+                    mock_ser.return_value = (mock_serpapi_results, False)
 
-                        results = await searcher.search("test query", skip_serpapi=False)
+                    results = await searcher.search("test query", skip_serpapi=False)
 
-                        # Serpapi extra info should be populated
-                        assert len(results.serpapi_extra) > 0
-                        assert results.serpapi_extra[0].link == "https://example.com/serpapi1"
+                    # Serpapi extra info should be populated
+                    assert len(results.serpapi_extra) > 0
+                    assert results.serpapi_extra[0].link == "https://example.com/serpapi1"
 
     await searcher.close()
 
@@ -300,7 +265,7 @@ async def test_parse_semantic_scholar(config):
         "authors": [{"name": "Alice Jones"}, {"name": "Bob Smith"}],
         "abstract": "S2 abstract",
         "venue": "ICML 2024",
-        "journal": "Journal of ML Research",
+        "journal": {"name": "Journal of ML Research", "volume": "10", "pages": "100-110"},
     }
 
     result = searcher._parse_s2(s2_item)
@@ -309,32 +274,9 @@ async def test_parse_semantic_scholar(config):
     assert result.title == "S2 Title"
     assert result.author == ["Alice Jones", "Bob Smith"]
     assert result.year == 2024
-    assert result.journal == "ICML 2024"  # venue takes priority
+    assert result.journal == "Journal of ML Research"  # journal.name takes priority
     assert result.abstract == "S2 abstract"
-    assert "semantic_scholar" in result.sources
-
-
-@pytest.mark.asyncio
-async def test_parse_scholarly(config):
-    """Test Scholarly result parsing."""
-    searcher = WebSearcher(config)
-
-    scholarly_item = {
-        "bib": {
-            "title": "Scholarly Title",
-            "pub_year": "2023",
-        },
-        "author": ["Williams, Bob", "Brown, Charlie"],
-        "pub_url": "https://example.com/paper",
-    }
-
-    result = searcher._parse_scholarly(scholarly_item)
-
-    assert result.title == "Scholarly Title"
-    assert result.author == ["Williams, Bob", "Brown, Charlie"]
-    assert result.year == 2023
-    assert result.url == "https://example.com/paper"
-    assert "scholarly" in result.sources
+    assert "s2" in result.sources
 
 
 @pytest.mark.asyncio
@@ -425,7 +367,7 @@ async def test_extract_pdf_link(config):
 
 
 @pytest.mark.asyncio
-async def test_search_with_filter(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
+async def test_search_with_filter(config, mock_crossref_results, mock_s2_results):
     """Test search passes filter to API clients."""
     searcher = WebSearcher(config)
 
@@ -433,22 +375,17 @@ async def test_search_with_filter(config, mock_crossref_results, mock_s2_results
 
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_crossref_results
-                mock_s2.return_value = mock_s2_results
-                mock_sch.return_value = mock_scholarly_results
+            mock_cr.return_value = mock_crossref_results
+            mock_s2.return_value = mock_s2_results
 
-                results = await searcher.search("test", filter=filter_obj, skip_serpapi=True)
+            results = await searcher.search("test", filter=filter_obj, skip_serpapi=True)
 
-                # Verify filter was passed to each API
-                cr_call = mock_cr.call_args
-                assert cr_call.kwargs.get('filter') == filter_obj
+            # Verify filter was passed to each API
+            cr_call = mock_cr.call_args
+            assert cr_call.kwargs.get('filter') == filter_obj
 
-                s2_call = mock_s2.call_args
-                assert s2_call.kwargs.get('filter') == filter_obj
-
-                sch_call = mock_sch.call_args
-                assert sch_call.kwargs.get('filter') == filter_obj
+            s2_call = mock_s2.call_args
+            assert s2_call.kwargs.get('filter') == filter_obj
 
     await searcher.close()
 
@@ -460,19 +397,17 @@ async def test_search_handles_api_errors(config, mock_crossref_results):
 
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_crossref_results
-                # S2 throws exception
-                mock_s2.side_effect = Exception("S2 API error")
-                mock_sch.return_value = []
+            mock_cr.return_value = mock_crossref_results
+            # S2 throws exception
+            mock_s2.side_effect = Exception("S2 API error")
 
-                # Should still return Crossref results
-                results = await searcher.search("test", skip_serpapi=True)
+            # Should still return Crossref results
+            results = await searcher.search("test", skip_serpapi=True)
 
-                assert len(results.results) > 0
-                assert "crossref" in results.sources_used
-                # S2 failed, should not be in sources
-                assert "semantic_scholar" not in results.sources_used
+            assert len(results.results) > 0
+            assert "crossref" in results.sources_used
+            # S2 failed, should not be in sources
+            assert "s2" not in results.sources_used
 
     await searcher.close()
 
@@ -490,39 +425,34 @@ async def test_search_results_no_doi(config):
 
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_cr_no_doi
-                mock_s2.return_value = []
-                mock_sch.return_value = []
+            mock_cr.return_value = mock_cr_no_doi
+            mock_s2.return_value = []
 
-                results = await searcher.search("test", skip_serpapi=True)
+            results = await searcher.search("test", skip_serpapi=True)
 
-                # Both results should be present (one with DOI, one without)
-                assert len(results.results) == 2
+            # Both results should be present (one with DOI, one without)
+            assert len(results.results) == 2
 
     await searcher.close()
 
 
 @pytest.mark.asyncio
-async def test_search_results_total_count(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
+async def test_search_results_total_count(config, mock_crossref_results, mock_s2_results):
     """Test total_count reflects unique results."""
     searcher = WebSearcher(config)
 
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_crossref_results  # 2 results, 1 merged
-                mock_s2.return_value = mock_s2_results  # 2 results, 1 merged
-                mock_sch.return_value = mock_scholarly_results  # 2 results
+            mock_cr.return_value = mock_crossref_results  # 2 results, 1 merged
+            mock_s2.return_value = mock_s2_results  # 2 results, 1 merged
 
-                results = await searcher.search("test", skip_serpapi=True)
+            results = await searcher.search("test", skip_serpapi=True)
 
-                # Total should be unique results: crossref(2) + s2(2) + scholarly(2) - duplicates(1)
-                # crossref: 10.1234/crossref1, 10.1234/merged
-                # s2: 10.1234/s2_paper, 10.1234/merged
-                # scholarly: no DOI papers (title-based)
-                # Total unique: ~5 papers
-                assert results.total_count == len(results.results)
+            # Total should be unique results: crossref(2) + s2(2) - duplicates(1)
+            # crossref: 10.1234/crossref1, 10.1234/merged
+            # s2: 10.1234/s2_paper, 10.1234/merged
+            # Total unique: 3 papers
+            assert results.total_count == len(results.results)
 
     await searcher.close()
 
@@ -553,7 +483,7 @@ async def test_filter_by_author(config):
 
 
 @pytest.mark.asyncio
-async def test_search_with_author_filter(config, mock_crossref_results, mock_s2_results, mock_scholarly_results):
+async def test_search_with_author_filter(config):
     """Test search with author filter applies post-filtering."""
     searcher = WebSearcher(config)
 
@@ -577,16 +507,14 @@ async def test_search_with_author_filter(config, mock_crossref_results, mock_s2_
 
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = mock_cr_with_author
-                mock_s2.return_value = []
-                mock_sch.return_value = []
+            mock_cr.return_value = mock_cr_with_author
+            mock_s2.return_value = []
 
-                results = await searcher.search("test", filter=filter_obj, skip_serpapi=True)
+            results = await searcher.search("test", filter=filter_obj, skip_serpapi=True)
 
-                # Only Smith paper should be in results
-                assert len(results.results) == 1
-                assert results.results[0].doi == "10.1234/crossref1"
+            # Only Smith paper should be in results
+            assert len(results.results) == 1
+            assert results.results[0].doi == "10.1234/crossref1"
 
     await searcher.close()
 
@@ -688,17 +616,17 @@ async def test_search_with_single_source_crossref(config, mock_crossref_results)
 
 
 @pytest.mark.asyncio
-async def test_search_with_single_source_semantic_scholar(config, mock_s2_results):
-    """Test search with single source (semantic_scholar only)."""
+async def test_search_with_single_source_s2(config, mock_s2_results):
+    """Test search with single source (s2 only)."""
     searcher = WebSearcher(config)
 
     with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
         mock_s2.return_value = mock_s2_results
 
-        results = await searcher.search("test query", sources=["semantic_scholar"])
+        results = await searcher.search("test query", sources=["s2"])
 
-        # Only semantic_scholar should be used
-        assert results.sources_used == ["semantic_scholar"]
+        # Only s2 should be used
+        assert results.sources_used == ["s2"]
 
     await searcher.close()
 
@@ -710,17 +638,15 @@ async def test_search_with_invalid_source(config):
 
     with patch.object(searcher.crossref, 'search', new_callable=AsyncMock) as mock_cr:
         with patch.object(searcher.s2, 'search', new_callable=AsyncMock) as mock_s2:
-            with patch.object(searcher.scholarly, 'search', new_callable=AsyncMock) as mock_sch:
-                mock_cr.return_value = []
-                mock_s2.return_value = []
-                mock_sch.return_value = []
+            mock_cr.return_value = []
+            mock_s2.return_value = []
 
-                # Invalid source should be ignored, no sources used
-                results = await searcher.search("test query", sources=["invalid_source"])
+            # Invalid source should be ignored, no sources used
+            results = await searcher.search("test query", sources=["invalid_source"])
 
-                # No valid sources, so no results
-                assert len(results.sources_used) == 0
-                assert len(results.results) == 0
+            # No valid sources, so no results
+            assert len(results.sources_used) == 0
+            assert len(results.results) == 0
 
     await searcher.close()
 

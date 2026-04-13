@@ -2,6 +2,20 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.5.3] - 2026-04-13
+
+### Removed
+- **scholarly package dependency** - removed due to:
+  - Package no longer maintained, has SyntaxWarning issues
+  - Limited usefulness as supplementary info source
+  - Removal simplifies default search sources (Crossref + S2)
+- Default websearch sources now: Crossref + Semantic Scholar (parallel)
+- `--source scholarly` option removed from websearch CLI
+
+### Changed
+- Search flow simplified: Crossref + S2 parallel search, Serpapi optional
+- Updated documentation to reflect scholarly removal
+
 ## [0.5.2] - 2026-04-13
 
 ### Changed
@@ -9,7 +23,7 @@ All notable changes to libby will be documented in this file.
   - With API key: 1 req/sec (docs: 300 req/5 min)
   - Without key: 1 req/3 sec (docs: 100 req/5 min)
 - **Default year filter fixed across all API modules**
-  - Crossref, S2, Scholarly now set `year_from = current_year - 2` when filter is None
+  - Crossref, S2 now set `year_from = current_year - 2` when filter is None
 
 ## [0.5.1] - 2026-04-13
 

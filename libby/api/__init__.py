@@ -9,7 +9,6 @@ from libby.api.pmc import PMCAPI
 from libby.api.biorxiv import BiorxivAPI
 from libby.api.scihub import ScihubAPI
 from libby.api.serpapi import SerpapiAPI, SerpapiConfirmationNeeded
-from libby.api.scholarly import ScholarlyAPI
 
 __all__ = [
     "AsyncAPIClient",
@@ -23,5 +22,4 @@ __all__ = [
     "ScihubAPI",
     "SerpapiAPI",
     "SerpapiConfirmationNeeded",
-    "ScholarlyAPI",
 ]

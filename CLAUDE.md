@@ -16,7 +16,7 @@ Retrieve metadata following BibTeX standard.
 
 **Input sources:**
 - DOI: Query Crossref directly
-- Title: Crossref first, Semantic Scholar fallback, `scholarly` package final fallback
+- Title: Crossref first, Semantic Scholar fallback
 - PDF: Extract text from first page to find DOI/title, then fallback to DOI extraction
 
 **Output:**
@@ -52,7 +52,6 @@ Search for paper metadata with keywords or semantic queries.
 **Sources (parallel execution):**
 - Crossref: `query.bibliographic` + filter params (from-pub-date, issn)
 - Semantic Scholar: `paper/search` endpoint + year/venue params
-- Google Scholar: scholarly package (sync wrapped in async)
 - Serpapi: Controlled usage (max 5 pages, quota detection)
 
 **Default filters:**
@@ -63,13 +62,12 @@ Search for paper metadata with keywords or semantic queries.
 **Filter conversion:**
 - Crossref: filter=from-pub-date:{year},issn:{issn}
 - Semantic Scholar: year={from}-{to}, venue={name}
-- Scholarly: after:{year}, before:{year}, source:{venue}
 
 **Result merging:**
 - Results with same DOI merged via `SearchResult.merge_from()`
 - Longer values kept (title, abstract)
 - Missing fields filled from other sources
-- Sources list combined (crossref, semantic_scholar, google_scholar)
+- Sources list combined (crossref, semantic_scholar)
 
 **DOI fallback:**
 If query is a DOI, triggers fetch -> extract workflow instead of search.

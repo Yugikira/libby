@@ -288,7 +288,7 @@ libby websearch "nature climate" --format json --no-save \
       "sources": ["crossref", "s2"]
     }
   ],
-  "sources_used": ["crossref", "s2", "scholarly"]
+  "sources_used": ["crossref", "s2"]
 }
 ```
 
@@ -384,7 +384,6 @@ echo "scanned.pdf|10.1234/doi" | libby extract
 **Parallel sources:**
 - Crossref: Bibliographic metadata + ISSN filtering
 - Semantic Scholar: AI paper database + abstracts
-- Google Scholar: via scholarly package (free)
 
 **Optional source:**
 - Serpapi: Controlled Google Scholar (max 5 pages, BibTeX fetch)
@@ -396,7 +395,6 @@ echo "scanned.pdf|10.1234/doi" | libby extract
 ```bash
 libby websearch "AI" --source crossref        # Crossref only
 libby websearch "AI" --source s2  # S2 only
-libby websearch "AI" --source scholarly        # Google Scholar only
 libby websearch "AI" --source serpapi          # Serpapi only
 ```
 
