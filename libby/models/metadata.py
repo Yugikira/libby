@@ -20,6 +20,7 @@ class BibTeXMetadata:
     pages: Optional[str] = None
     publisher: Optional[str] = None
     url: Optional[str] = None
+    abstract: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -36,4 +37,5 @@ class BibTeXMetadata:
             "pages": self.pages,
             "publisher": self.publisher,
             "url": self.url,
+            "abstract": self.abstract,
         }

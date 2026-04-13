@@ -30,6 +30,8 @@ class BibTeXFormatter:
             lines.append(f"  publisher = {{{metadata.publisher}}},")
         if metadata.url:
             lines.append(f"  url = {{{metadata.url}}},")
+        if metadata.abstract:
+            lines.append(f"  abstract = {{{metadata.abstract}}},")
 
         lines.append("}")
         return "\n".join(lines)

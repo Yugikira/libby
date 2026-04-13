@@ -3,13 +3,17 @@
 from pathlib import Path
 from typing import Optional
 import re
+import logging
 
 from libby.api.crossref import CrossrefAPI
+from libby.api.semantic_scholar import SemanticScholarAPI
 from libby.models.config import LibbyConfig
 from libby.core.citekey import CitekeyFormatter
 from libby.core.pdf_text import extract_first_page_text
 from libby.utils.doi_parser import normalize_doi, extract_doi_from_text
 from libby.models.metadata import BibTeXMetadata
+
+logger = logging.getLogger(__name__)
 
 
 class MetadataNotFoundError(Exception):
@@ -22,6 +26,22 @@ class AmbiguousMatchError(Exception):
     pass
 
 
+class SerpapiSearchNeeded(Exception):
+    """Raised when Crossref and S2 fail, suggesting Serpapi search.
+
+    Attributes:
+        title: The title that needs Serpapi search
+        message: User-facing message about Serpapi option
+    """
+    def __init__(self, title: str):
+        self.title = title
+        self.message = (
+            f"Title '{title}' not found in Crossref or Semantic Scholar.\n"
+            "Serpapi (Google Scholar) is available but uses API quota.\n"
+            "Use extract_from_title(title, use_serpapi=True) to proceed."
+        )
+
+
 class MetadataExtractor:
     """Extract metadata from DOI, title, or PDF."""
 
@@ -29,10 +49,13 @@ class MetadataExtractor:
     MIN_SCORE_THRESHOLD = 50.0
     # Score difference threshold to detect tie (ambiguous match)
     TIE_THRESHOLD = 5.0
+    # Title similarity threshold for S2 results
+    MIN_TITLE_SIMILARITY = 0.4
 
     def __init__(self, config: LibbyConfig):
         self.config = config
         self.crossref = CrossrefAPI()
+        self.s2 = SemanticScholarAPI(api_key=config.get_s2_api_key())
         self.formatter = CitekeyFormatter(config.citekey)
 
     async def extract_from_doi(self, doi: str) -> BibTeXMetadata:
@@ -48,32 +71,170 @@ class MetadataExtractor:
         metadata.citekey = self.formatter.format(metadata)
         return metadata
 
-    async def extract_from_title(self, title: str) -> BibTeXMetadata:
-        """Extract metadata from title (cascade: Crossref -> S2 -> scholarly).
+    async def extract_from_title(self, title: str, use_serpapi: bool = False) -> BibTeXMetadata:
+        """Extract metadata from title (cascade: Crossref -> S2 -> Serpapi).
 
         Uses query.bibliographic for better matching and validates results:
         - Checks score is above threshold (default 50)
         - Detects ties (ambiguous matches) when top results have similar scores
         - Verifies title similarity if possible
 
+        Args:
+            title: Paper title to search
+            use_serpapi: If True, use Serpapi when Crossref/S2 fail (uses quota)
+                         If False, raise SerpapiSearchNeeded instead
+
         Raises:
-            MetadataNotFoundError: When no suitable match found
+            MetadataNotFoundError: When no suitable match found and Serpapi not enabled
+            SerpapiSearchNeeded: When Crossref/S2 fail and use_serpapi=False
             AmbiguousMatchError: When multiple results have similar scores
         """
         # Phase 1: Crossref
+        logger.debug(f"Searching Crossref for: {title}")
         results = await self.crossref.search_by_title(title, rows=5)
         if results:
-            # Validate and select best result
             best_result = self._select_best_result(results, title)
             if best_result:
                 metadata = self.crossref._parse_to_metadata(best_result)
                 metadata.citekey = self.formatter.format(metadata)
+                logger.info(f"Found in Crossref: {metadata.citekey}")
                 return metadata
 
-        # Phase 2: Semantic Scholar (TODO)
-        # Phase 3: scholarly (TODO)
+        # Phase 2: Semantic Scholar
+        logger.debug(f"Searching Semantic Scholar for: {title}")
+        s2_results = await self.s2.search(query=title, limit=10)
+        if s2_results:
+            best_result = self._select_best_s2_result(s2_results, title)
+            if best_result:
+                metadata = self._parse_s2_to_metadata(best_result)
+                metadata.citekey = self.formatter.format(metadata)
+                logger.info(f"Found in Semantic Scholar: {metadata.citekey}")
+                return metadata
 
-        raise MetadataNotFoundError(f"Title not found: {title}")
+        # Phase 3: Serpapi (requires user confirmation)
+        if use_serpapi:
+            logger.debug(f"Searching Serpapi for: {title}")
+            return await self._extract_from_serpapi(title)
+
+        # All sources failed, suggest Serpapi
+        raise SerpapiSearchNeeded(title)
+
+    async def _extract_from_serpapi(self, title: str) -> BibTeXMetadata:
+        """Extract metadata from Serpapi (Google Scholar)."""
+        from libby.api.serpapi import SerpapiAPI
+        from libby.core.websearch import WebSearcher
+
+        api_key = self.config.get_serpapi_api_key()
+        if not api_key:
+            raise MetadataNotFoundError(
+                f"Title not found: {title}\n"
+                "Serpapi requires SERPAPI_API_KEY environment variable."
+            )
+
+        serpapi = SerpapiAPI()
+        try:
+            # Search Serpapi
+            raw_results, quota_reached = await serpapi.search(
+                query=title, api_key=api_key, max_pages=1
+            )
+
+            if quota_reached:
+                raise MetadataNotFoundError(f"Serpapi quota reached")
+
+            if not raw_results:
+                raise MetadataNotFoundError(f"Title not found in Serpapi: {title}")
+
+            # Use WebSearcher's _parse_serpapi method
+            searcher = WebSearcher(self.config)
+            search_result = searcher._parse_serpapi(raw_results[0])
+
+            # Convert SearchResult to BibTeXMetadata
+            metadata = BibTeXMetadata(
+                doi=search_result.doi,
+                title=search_result.title,
+                author=search_result.author or [],
+                year=search_result.year,
+                journal=search_result.journal,
+                volume=search_result.volume,
+                number=search_result.number,
+                pages=search_result.pages,
+                publisher=search_result.publisher,
+                abstract=search_result.abstract,
+                url=search_result.url,
+            )
+            metadata.citekey = self.formatter.format(metadata)
+            logger.info(f"Found in Serpapi: {metadata.citekey}")
+            return metadata
+
+        finally:
+            await serpapi.close()
+
+    def _select_best_s2_result(self, results: list[dict], query_title: str) -> Optional[dict]:
+        """Select best matching result from S2 search.
+
+        Args:
+            results: List of S2 paper objects
+            query_title: Original search query
+
+        Returns:
+            Best matching result, or None if no suitable match found.
+        """
+        if not results:
+            return None
+
+        # S2 doesn't have score, use title similarity
+        for result in results:
+            s2_title = result.get("title", "")
+            if s2_title:
+                similarity = self._title_similarity(query_title, s2_title)
+                if similarity >= self.MIN_TITLE_SIMILARITY:
+                    return result
+
+        return None
+
+    def _parse_s2_to_metadata(self, data: dict) -> BibTeXMetadata:
+        """Parse S2 paper object to BibTeXMetadata."""
+        # Authors
+        authors = []
+        for author in data.get("authors", []):
+            name = author.get("name")
+            if name:
+                authors.append(name)
+
+        # Year
+        year = data.get("year")
+
+        # Journal: S2 has venue field, or journal object
+        journal = None
+        volume = None
+        pages = None
+        journal_obj = data.get("journal") or {}
+        if isinstance(journal_obj, dict):
+            journal = journal_obj.get("name") or data.get("venue")
+            volume = journal_obj.get("volume")
+            pages = journal_obj.get("pages")
+        else:
+            journal = data.get("venue")
+
+        # DOI from externalIds
+        external_ids = data.get("externalIds") or {}
+        doi = external_ids.get("DOI")
+
+        # URL from S2 paperId
+        url = f"https://semanticscholar.org/paper/{data.get('paperId')}" if data.get("paperId") else None
+
+        return BibTeXMetadata(
+            citekey="",  # Will be set by formatter
+            doi=doi,
+            title=data.get("title"),
+            author=authors,
+            year=year,
+            journal=journal,
+            volume=volume,
+            pages=pages,
+            url=url,
+            abstract=data.get("abstract"),
+        )
 
     def _select_best_result(self, results: list[dict], query_title: str) -> Optional[dict]:
         """Select the best matching result from search results.
@@ -181,3 +342,4 @@ class MetadataExtractor:
     async def close(self):
         """Close resources."""
         await self.crossref.close()
+        await self.s2.close()

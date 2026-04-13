@@ -7,10 +7,11 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.prompt import Confirm
 
 from libby.config.loader import load_config
 from libby.config.env_check import check_env_vars
-from libby.core.metadata import MetadataExtractor
+from libby.core.metadata import MetadataExtractor, SerpapiSearchNeeded
 from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
 from libby.utils.file_ops import FileHandler
 from libby.utils.doi_parser import is_doi
@@ -19,6 +20,7 @@ from libby.output.bibtex import BibTeXFormatter
 from libby.output.json import JSONFormatter
 from libby.models.metadata import BibTeXMetadata
 from libby.models.fetch_result import FetchResult
+from libby.models.result import BatchResult
 
 console = Console()
 
@@ -67,6 +69,7 @@ def extract(
     no_scihub: bool = typer.Option(False, "--no-scihub", help="Skip Sci-hub when fetching"),
     with_doi: Optional[str] = typer.Option(None, "--with-doi", help="Provide DOI for PDF input (scanned PDFs)"),
     with_title: Optional[str] = typer.Option(None, "--with-title", help="Provide title for PDF input (scanned PDFs)"),
+    serpapi: bool = typer.Option(False, "--serpapi", help="Use Serpapi (Google Scholar) when Crossref/S2 fail"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="Config file path"),
     no_env_check: bool = typer.Option(False, "--no-env-check", help="Skip environment variable check"),
 ):
@@ -74,13 +77,18 @@ def extract(
 
     Input types:
         - DOI: Query Crossref for metadata
-        - Title: Search Crossref for metadata
+        - Title: Search Crossref -> S2 -> Serpapi (cascade)
         - PDF: Extract DOI/title from first page, then get metadata
         - PDF with metadata: 'pdf_path|doi' or 'pdf_path|title' (for scanned PDFs)
 
     For scanned PDFs that cannot extract DOI/title:
         - Use --with-doi or --with-title for single PDF
         - Use pipe/batch input: 'pdf_path|doi' or 'pdf_path|title'
+
+    Title search cascade:
+        1. Crossref (free)
+        2. Semantic Scholar (free)
+        3. Serpapi (uses quota, requires --serpapi flag or user confirmation)
 
     With --fetch flag, also download PDF for DOI inputs.
     """
@@ -220,10 +228,95 @@ def extract(
     # Process batch (normal workflow)
     console.print(f"[green]Processing {len(inputs)} input(s)...[/green]")
 
+    # For single input without --serpapi, handle SerpapiSearchNeeded with user prompt
+    single_input_mode = len(inputs) == 1 and not serpapi
+
     async def run_extraction():
-        results = await process_batch(inputs, extractor, file_handler, ai_extract, copy)
-        await extractor.close()
-        return results
+        if single_input_mode:
+            # Single input: handle SerpapiSearchNeeded with user confirmation
+            input_item, provided_doi, provided_title = inputs[0]
+            input_path = Path(input_item)
+
+            try:
+                if input_path.suffix.lower() == ".pdf" and input_path.exists():
+                    if provided_doi:
+                        metadata = await extractor.extract_from_doi(provided_doi)
+                    elif provided_title:
+                        metadata = await extractor.extract_from_title(provided_title)
+                    else:
+                        metadata = await extractor.extract_from_pdf(input_path, use_ai=ai_extract)
+                    file_handler.organize_pdf(input_path, metadata, copy=copy)
+
+                elif input_path.exists():
+                    raise MetadataNotFoundError(f"Unsupported file type: {input_path}")
+
+                elif provided_doi or is_doi(input_item):
+                    doi = provided_doi or input_item
+                    metadata = await extractor.extract_from_doi(doi)
+
+                else:
+                    title = provided_title or input_item
+                    metadata = await extractor.extract_from_title(title)
+
+                await extractor.close()
+                return BatchResult(succeeded=[{
+                    "input": input_item,
+                    "citekey": metadata.citekey,
+                    "doi": metadata.doi,
+                    "metadata": metadata.to_dict(),
+                }])
+
+            except SerpapiSearchNeeded as e:
+                # Ask user for Serpapi confirmation
+                await extractor.close()
+                console.print(f"\n[yellow]{e.message}[/yellow]")
+
+                if os.getenv("SERPAPI_API_KEY") or config.get_serpapi_api_key():
+                    if Confirm.ask("Use Serpapi (Google Scholar)?"):
+                        # Re-extract with Serpapi
+                        extractor2 = MetadataExtractor(config)
+                        try:
+                            if input_path.suffix.lower() == ".pdf" and input_path.exists():
+                                metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
+                                file_handler.organize_pdf(input_path, metadata, copy=copy)
+                            else:
+                                metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
+                            await extractor2.close()
+                            return BatchResult(succeeded=[{
+                                "input": input_item,
+                                "citekey": metadata.citekey,
+                                "doi": metadata.doi,
+                                "metadata": metadata.to_dict(),
+                            }])
+                        except Exception as e2:
+                            await extractor2.close()
+                            return BatchResult(failed=[{
+                                "input": input_item,
+                                "error": str(e2),
+                            }])
+                    else:
+                        return BatchResult(failed=[{
+                            "input": input_item,
+                            "error": "User declined Serpapi",
+                        }])
+                else:
+                    return BatchResult(failed=[{
+                        "input": input_item,
+                        "error": "Serpapi requires SERPAPI_API_KEY",
+                    }])
+
+            except Exception as e:
+                await extractor.close()
+                return BatchResult(failed=[{
+                    "input": input_item,
+                    "error": str(e),
+                }])
+
+        else:
+            # Batch mode: use --serpapi flag to control Serpapi usage
+            results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=serpapi)
+            await extractor.close()
+            return results
 
     results = run_async(run_extraction())
 

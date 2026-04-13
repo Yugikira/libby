@@ -2,11 +2,14 @@
 
 import sys
 import json
+import logging
 from pathlib import Path
 
 from libby.models.result import BatchResult
-from libby.core.metadata import MetadataNotFoundError
+from libby.core.metadata import MetadataNotFoundError, SerpapiSearchNeeded
 from libby.utils.doi_parser import is_doi
+
+logger = logging.getLogger(__name__)
 
 
 def read_stdin_lines() -> list[str]:
@@ -22,6 +25,7 @@ async def process_batch(
     file_handler,
     ai_extract: bool = False,
     copy: bool = False,
+    use_serpapi: bool = False,
 ) -> BatchResult:
     """Process batch of inputs.
 
@@ -36,6 +40,7 @@ async def process_batch(
         file_handler: FileHandler instance
         ai_extract: Use AI for PDF extraction
         copy: Copy PDF instead of moving
+        use_serpapi: Use Serpapi when Crossref/S2 fail (no user confirmation in batch)
 
     Returns:
         BatchResult with succeeded and failed lists
@@ -53,7 +58,7 @@ async def process_batch(
                     metadata = await extractor.extract_from_doi(provided_doi)
                 elif provided_title:
                     # PDF with provided title (scanned PDF)
-                    metadata = await extractor.extract_from_title(provided_title)
+                    metadata = await extractor.extract_from_title(provided_title, use_serpapi=use_serpapi)
                 else:
                     # PDF without metadata - extract from text
                     metadata = await extractor.extract_from_pdf(input_path, use_ai=ai_extract)
@@ -73,7 +78,7 @@ async def process_batch(
             else:
                 # Title input
                 title = provided_title or input_item
-                metadata = await extractor.extract_from_title(title)
+                metadata = await extractor.extract_from_title(title, use_serpapi=use_serpapi)
 
             results.succeeded.append({
                 "input": input_item,
@@ -81,6 +86,16 @@ async def process_batch(
                 "doi": metadata.doi,
                 "metadata": metadata.to_dict(),
             })
+
+        except SerpapiSearchNeeded as e:
+            # Crossref and S2 failed, Serpapi needed
+            # In batch mode, fail the task instead of prompting user
+            results.failed.append({
+                "input": input_item,
+                "error": e.message,
+                "needs_serpapi": True,
+            })
+            logger.warning(f"Serpapi needed for: {input_item}")
 
         except Exception as e:
             results.failed.append({
