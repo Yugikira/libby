@@ -119,6 +119,7 @@ class SerpapiAPI(AsyncAPIClient):
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
 
+            driver = None
             try:
                 driver = webdriver.Chrome(options=chrome_options)
                 driver.get(bibtex_url)
@@ -130,16 +131,19 @@ class SerpapiAPI(AsyncAPIClient):
 
                 # Get BibTeX text
                 bibtex_text = driver.find_element(By.TAG_NAME, "pre").text
-                driver.quit()
                 return bibtex_text
 
             except (TimeoutException, WebDriverException) as e:
                 logger.warning(f"Selenium failed for BibTeX: {e}")
-                try:
-                    driver.quit()
-                except:
-                    pass
                 return None
+
+            finally:
+                # Always close driver to prevent resource leak
+                if driver is not None:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
 
         # Run in thread pool (Selenium is sync)
         loop = asyncio.get_running_loop()

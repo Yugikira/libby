@@ -192,8 +192,6 @@ def extract(
         console.print(f"[green]Fetching PDF for DOI: {doi}[/green]")
 
         async def run_fetch_single():
-            from rich.prompt import Confirm
-
             extractor = MetadataExtractor(config)
             fetcher = PDFFetcher(config)
 

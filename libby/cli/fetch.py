@@ -340,9 +340,9 @@ def _display_results(results: list, dry_run: bool = False):
         console.print("\n[green]Successfully fetched:[/green]")
         for r in succeeded:
             if dry_run:
-                console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_url}")
+                console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_url or 'N/A'}")
             else:
-                console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_path}")
+                console.print(f"  [green][{r.source}][/green] {r.doi} -> {r.pdf_path or 'N/A'}")
 
     if failed:
         console.print("\n[red]Failed:[/red]")

@@ -15,6 +15,7 @@ from libby.api.core import CoreAPI
 from libby.api.scihub import ScihubAPI, MANUAL_DOWNLOAD_HINT
 from libby.api.scihub_selenium import ScihubDownloader
 from libby.api.serpapi import SerpapiAPI, SerpapiConfirmationNeeded
+from libby.utils.url_validation import is_valid_pdf_url, MAX_PDF_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -472,13 +473,24 @@ class PDFFetcher:
         )
 
     async def download_pdf_to_file(self, pdf_url: str, dest_path: Path) -> bool:
-        """Stream download PDF to file.
+        """Stream download PDF to file with URL validation.
+
+        Security checks:
+        1. URL must use http/https scheme
+        2. Host must not be internal IP (SSRF protection)
+        3. File size must not exceed MAX_PDF_SIZE
 
         Returns:
             True on success, False on failure
         """
         import aiohttp
         import aiofiles
+
+        # Validate URL before downloading (SSRF protection)
+        is_valid, error = is_valid_pdf_url(pdf_url)
+        if not is_valid:
+            logger.warning(f"URL validation failed: {error}")
+            return False
 
         temp_path = dest_path.parent / f".tmp_{dest_path.name}"
 
@@ -489,10 +501,24 @@ class PDFFetcher:
                         logger.warning(f"Download failed: status {resp.status}")
                         return False
 
+                    # Check content length before downloading
+                    content_length = resp.content_length
+                    if content_length and content_length > MAX_PDF_SIZE:
+                        logger.warning(f"PDF too large: {content_length} bytes (max {MAX_PDF_SIZE})")
+                        return False
+
                     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
+                    # Download with size tracking
+                    total_size = 0
                     async with aiofiles.open(temp_path, 'wb') as f:
                         async for chunk in resp.content.iter_chunked(8192):
+                            total_size += len(chunk)
+                            if total_size > MAX_PDF_SIZE:
+                                logger.warning(f"PDF exceeded max size during download")
+                                await f.close()
+                                temp_path.unlink()
+                                return False
                             await f.write(chunk)
 
                     # Validate PDF header
@@ -504,7 +530,7 @@ class PDFFetcher:
                             return False
 
                     temp_path.rename(dest_path)
-                    logger.info(f"Downloaded: {dest_path}")
+                    logger.info(f"Downloaded: {dest_path} ({total_size} bytes)")
                     return True
 
         except Exception as e:

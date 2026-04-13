@@ -53,6 +53,7 @@ def normalize_doi(doi: str) -> str:
     """Normalize DOI string by removing common prefixes."""
     doi = doi.strip()
     doi = doi.removeprefix("https://doi.org/")
+    doi = doi.removeprefix("http://doi.org/")
     doi = doi.removeprefix("doi.org/")
     doi = doi.removeprefix("DOI:")
     doi = doi.removeprefix("doi:")

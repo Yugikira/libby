@@ -2,6 +2,27 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.5.1] - 2026-04-13
+
+### Security
+- **SSRF protection**: Add URL validation in PDF downloads
+  - Block internal/private IP addresses
+  - Enforce http/https scheme only
+  - Add file size limit (50 MB max)
+  - Warning for non-trusted domains
+- **New module**: `libby/utils/url_validation.py` with `is_valid_pdf_url()`
+
+### Fixed
+- **Session leak in base API**: Add lock for race condition prevention, proper timeout config
+- **WebDriver leak in Serpapi**: Use try/finally to ensure driver.quit() is always called
+- **WebDriver leak in Scihub**: Add proper cleanup on exceptions, refactor error handling
+- **DOI normalization**: Add missing `http://doi.org/` prefix handling
+- **Null display**: Add `N/A` fallback for `pdf_path` in fetch result display
+
+### Refactored
+- **ScihubDownloader**: Extract `_ensure_driver()` helper for cleaner initialization
+- **BaseAPIClient**: Add 5xx error handling, ClientException catch, proper 429 retry flow
+
 ## [0.5.0] - 2026-04-13
 
 ### Changed

@@ -77,6 +77,15 @@ class ScihubDownloader:
 
         return driver
 
+    def _ensure_driver(self) -> tuple[webdriver.Chrome | None, str | None]:
+        """Ensure driver is initialized. Returns (driver, error) tuple."""
+        try:
+            if not self.driver:
+                self.driver = self._setup_driver()
+            return self.driver, None
+        except WebDriverException as e:
+            return None, f"Failed to init Chrome driver: {e}. Chrome browser required."
+
     def get_pdf_url(self, doi: str, timeout: int = 30) -> tuple[str | None, str | None]:
         """Get PDF URL from Sci-hub using Selenium.
 
@@ -87,59 +96,63 @@ class ScihubDownloader:
         Returns:
             (pdf_url, error_message) - pdf_url if found, error_message if failed
         """
+        driver, error = self._ensure_driver()
+        if error:
+            return None, error
+
         try:
-            if not self.driver:
-                self.driver = self._setup_driver()
-        except WebDriverException as e:
-            return None, f"Failed to init Chrome driver: {e}. Chrome browser required."
+            for mirror in SCIHUB_MIRRORS:
+                url = f"{mirror}/{doi}"
+                try:
+                    logger.info(f"Trying: {url}")
+                    driver.get(url)
 
-        for mirror in SCIHUB_MIRRORS:
-            url = f"{mirror}/{doi}"
-            try:
-                logger.info(f"Trying: {url}")
-                self.driver.get(url)
+                    # Wait for page load
+                    time.sleep(3)
 
-                # Wait for page load
-                time.sleep(3)
+                    current_url = driver.current_url
+                    logger.debug(f"Current URL: {current_url}")
 
-                current_url = self.driver.current_url
-                logger.debug(f"Current URL: {current_url}")
+                    # Try to find PDF link via <a> tags
+                    pdf_links = driver.find_elements(By.TAG_NAME, "a")
+                    for link in pdf_links:
+                        href = link.get_attribute("href")
+                        if href and (".pdf" in href.lower() or "/storage/" in href.lower()):
+                            logger.info(f"Found PDF link via <a>: {href}")
+                            return href, None
 
-                # Try to find PDF link via <a> tags
-                pdf_links = self.driver.find_elements(By.TAG_NAME, "a")
-                for link in pdf_links:
-                    href = link.get_attribute("href")
-                    if href and (".pdf" in href.lower() or "/storage/" in href.lower()):
-                        logger.info(f"Found PDF link via <a>: {href}")
-                        return href, None
+                    # Try JavaScript query for all links
+                    all_links = driver.execute_script("""
+                        var links = document.querySelectorAll('a[href]');
+                        var result = [];
+                        for (var i = 0; i < links.length; i++) {
+                            result.push(links[i].href);
+                        }
+                        return result;
+                    """)
+                    for link in all_links:
+                        if ".pdf" in link.lower() or "/storage/" in link.lower():
+                            logger.info(f"Found PDF link via JS: {link}")
+                            return link, None
 
-                # Try JavaScript query for all links
-                all_links = self.driver.execute_script("""
-                    var links = document.querySelectorAll('a[href]');
-                    var result = [];
-                    for (var i = 0; i < links.length; i++) {
-                        result.push(links[i].href);
-                    }
-                    return result;
-                """)
-                for link in all_links:
-                    if ".pdf" in link.lower() or "/storage/" in link.lower():
-                        logger.info(f"Found PDF link via JS: {link}")
-                        return link, None
+                    # Check if page itself is PDF
+                    if current_url.endswith(".pdf"):
+                        logger.info(f"Page is PDF: {current_url}")
+                        return current_url, None
 
-                # Check if page itself is PDF
-                if current_url.endswith(".pdf"):
-                    logger.info(f"Page is PDF: {current_url}")
-                    return current_url, None
+                except TimeoutException:
+                    logger.warning(f"Timeout accessing {url}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Error accessing {url}: {e}")
+                    continue
 
-            except TimeoutException:
-                logger.warning(f"Timeout accessing {url}")
-                continue
-            except Exception as e:
-                logger.warning(f"Error accessing {url}: {e}")
-                continue
+            return None, f"No PDF found. {MANUAL_DOWNLOAD_HINT.format(scihub_url=SCIHUB_MIRRORS[0], doi=doi)}"
 
-        return None, f"No PDF found. {MANUAL_DOWNLOAD_HINT.format(scihub_url=SCIHUB_MIRRORS[0], doi=doi)}"
+        except Exception as e:
+            # On fatal error, close driver to prevent leak
+            self.close()
+            return None, f"Fatal error: {e}"
 
     def download_pdf(self, doi: str, output_path: Optional[Path] = None) -> tuple[Path | None, str | None]:
         """Download PDF from Sci-hub.
@@ -163,9 +176,13 @@ class ScihubDownloader:
         if not pdf_url:
             return None, error
 
+        driver, driver_error = self._ensure_driver()
+        if driver_error:
+            return None, driver_error
+
         try:
             # Navigate to PDF URL
-            self.driver.get(pdf_url)
+            driver.get(pdf_url)
             time.sleep(2)
 
             # Use fetch API to download
@@ -185,7 +202,7 @@ class ScihubDownloader:
             }})()
             """
 
-            result = self.driver.execute_script(download_script)
+            result = driver.execute_script(download_script)
             logger.debug(f"Triggered download, blob size: {result}")
 
             # Wait for download to complete
@@ -208,11 +225,17 @@ class ScihubDownloader:
             return None, f"Download failed - file not found at {output_path}"
 
         except Exception as e:
+            # On error, close driver to prevent leak
+            self.close()
             return None, f"Download error: {e}"
 
     def close(self):
         """Close the browser."""
         if self.driver:
-            self.driver.quit()
-            self.driver = None
-            logger.debug("Browser closed")
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logger.warning(f"Error closing driver: {e}")
+            finally:
+                self.driver = None
+                logger.debug("Browser closed")
