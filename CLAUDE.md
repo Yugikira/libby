@@ -84,7 +84,7 @@ If query is a DOI, triggers fetch -> extract workflow instead of search.
 
 | Variable | Purpose | Behavior if missing |
 |----------|---------|---------------------|
-| `S2_API_KEY` | Semantic Scholar API key | Strict rate limit (1 req/sec vs 100 req/5min) |
+| `S2_API_KEY` | Semantic Scholar API key | Same rate limit (1 req/sec) |
 | `SERPAPI_API_KEY` | Serpapi endpoint | Skip Google Scholar Serpapi method |
 | `EMAIL` | Unpaywall access | Skip Unpaywall queries |
 

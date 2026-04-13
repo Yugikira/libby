@@ -1,7 +1,6 @@
 """libby fetch command."""
 
 import asyncio
-import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -18,6 +17,7 @@ from libby.core.metadata import MetadataExtractor
 from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
 from libby.output.bibtex import BibTeXFormatter
 from libby.models.fetch_result import FetchResult
+from libby.cli.utils import read_stdin_lines
 
 console = Console()
 
@@ -47,6 +47,7 @@ def fetch(
     Examples:
         libby fetch 10.1007/s11142-016-9368-9
         libby fetch --batch dois.txt
+        cat dois.txt | libby fetch
         libby fetch 10.1234/abc --source unpaywall
         libby fetch 10.1234/abc --source scihub
         libby fetch 10.1234/abc --dry-run
@@ -82,7 +83,7 @@ def fetch(
 
 
 def _gather_inputs(input: Optional[str], batch_file: Optional[Path]) -> list:
-    """Gather DOIs from arguments and batch file."""
+    """Gather DOIs from arguments, batch file, and stdin."""
     dois = []
     if input:
         dois.append(input)
@@ -92,6 +93,9 @@ def _gather_inputs(input: Optional[str], batch_file: Optional[Path]) -> list:
             for line in batch_file.read_text().splitlines()
             if line.strip()
         ])
+    # Stdin pipeline input
+    stdin_lines = read_stdin_lines()
+    dois.extend(stdin_lines)
     return dois
 
 

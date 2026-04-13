@@ -11,11 +11,13 @@ All notable changes to libby will be documented in this file.
   - `unpaywall.email` - alternative to EMAIL env var
   - `ai_extractor.api_key` - alternative to DEEPSEEK_API_KEY env var
   - Config file values take precedence over environment variables
+- **Stdin pipeline for fetch** (`cat dois.txt | libby fetch`)
 
 ### Changed
 - **Unified source parameter naming**: `--source s2` for both fetch and websearch
   - Previously: fetch used `s2`, websearch used `semantic_scholar`
   - Now: both commands use `s2` consistently
+- **Corrected S2_API_KEY rate limit info**: 1 req/sec (same with or without key)
 
 ### Fixed
 - **Semantic Scholar search fixes**

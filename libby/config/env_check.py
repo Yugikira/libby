@@ -7,7 +7,7 @@ from rich.console import Console
 console = Console()
 
 ENV_VARS = {
-    "S2_API_KEY": ("Semantic Scholar API", "100 req/5min with key", "1 req/sec without"),
+    "S2_API_KEY": ("Semantic Scholar API", "1 req/sec with key", "1 req/sec (same)"),
     "SERPAPI_API_KEY": ("Serpapi", "Google Scholar fallback", "Skip method"),
     "EMAIL": ("Unpaywall", "OA PDF lookup", "Skip method"),
     "DEEPSEEK_API_KEY": ("AI Extractor", "PDF DOI/title extraction", "Skip feature"),

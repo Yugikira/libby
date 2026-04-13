@@ -125,7 +125,7 @@ You can configure API keys and email in **two ways**:
 
 | Variable | YAML Alternative | Purpose | Behavior if missing |
 |----------|------------------|---------|---------------------|
-| `S2_API_KEY` | `semantic_scholar.api_key` | Semantic Scholar API (100 req/5min) | Strict rate limit (1 req/sec) |
+| `S2_API_KEY` | `semantic_scholar.api_key` | Semantic Scholar API | Strict rate limit (1 req/sec) |
 | `SERPAPI_API_KEY` | `serpapi.api_key` | Serpapi Google Scholar | Skip Serpapi search |
 | `EMAIL` | `unpaywall.email` | Unpaywall API access | Skip Unpaywall queries |
 | `DEEPSEEK_API_KEY` | `ai_extractor.api_key` | AI-powered PDF extraction | Skip AI extraction |
@@ -134,7 +134,7 @@ Check status at startup:
 
 ```bash
 $ libby extract doi
-[OK] S2_API_KEY: Semantic Scholar API enabled (100 req/5min with key)
+[OK] S2_API_KEY: Semantic Scholar API enabled (1 req/sec with key)
 [OK] SERPAPI_API_KEY: Serpapi enabled (Google Scholar fallback)
 [OK] EMAIL: Unpaywall enabled (OA PDF lookup)
 [OK] DEEPSEEK_API_KEY: AI Extractor enabled (PDF DOI/title extraction)
@@ -163,6 +163,10 @@ cat dois.txt | libby extract
 # Fetch PDF by DOI
 libby fetch 10.1007/s11142-016-9368-9
 libby fetch 10.1007/s11142-016-9368-9 --dry-run  # Show URL only
+
+# Batch fetch from file or stdin
+libby fetch --batch dois.txt
+cat dois.txt | libby fetch
 
 # Use specific source only
 libby fetch 10.1007/s11142-016-9368-9 --source unpaywall
