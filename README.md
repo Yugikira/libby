@@ -22,8 +22,12 @@ uv sync
 Create `~/.libby/config.yaml` for customization:
 
 ```yaml
-# Base directory for all paper files
-papers_dir: ~/.lib/papers
+# Base directory for all libby data
+# Subdirectories are auto-generated:
+#   - papers/      : PDF files and BibTeX metadata
+#   - extract_task/: Failed extraction task logs
+#   - search_results/: Websearch output files
+lib_dir: ~/.lib
 
 # Environment variables (alternative to system env vars)
 # You can configure API keys here instead of setting environment variables
@@ -110,7 +114,7 @@ You can configure API keys and email in **two ways**:
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `papers_dir` | Base directory for PDFs and metadata | `~/.lib/papers` |
+| `lib_dir` | Base directory for all libby data | `~/.lib` |
 | `citekey.pattern` | Citekey template: `{author}`, `{year}`, `{title}` | `{author}_{year}_{title}` |
 | `citekey.author_words` | Number of author surname words | 1 |
 | `citekey.title_words` | Number of title content words | 3 |
@@ -120,6 +124,14 @@ You can configure API keys and email in **two ways**:
 | `serpapi.api_key` | Serpapi key (or use env var) | None |
 | `unpaywall.email` | Email for Unpaywall (or use env var) | None |
 | `ai_extractor.api_key` | DeepSeek key (or use env var) | None |
+
+### Auto-generated Subdirectories
+
+| Directory | Purpose |
+|-----------|---------|
+| `lib_dir/papers/` | PDF files and BibTeX metadata |
+| `lib_dir/extract_task/` | Failed extraction task logs (`failed_tasks.json`) |
+| `lib_dir/search_results/` | Websearch output files (`yymmdd_keywords.bib`) |
 
 ### Environment Variables Reference
 
@@ -150,15 +162,32 @@ Basic operations with readable output:
 # Extract metadata from DOI
 libby extract 10.1007/s11142-016-9368-9
 
+# Extract from title (cascade: Crossref → S2 → Serpapi)
+libby extract "On the Impossibility of Informationally Efficient Markets"
+
 # Extract from PDF with AI assistance
 libby extract paper.pdf --ai-extract
+
+# Scanned PDF: provide DOI or title manually
+libby extract scanned.pdf --with-doi 10.1007/s11142-016-9368-9
+libby extract scanned.pdf --with-title "paper title here"
 
 # Batch process PDF directory
 libby extract --batch-dir ./papers/
 
+# Batch with metadata pairs (pdf|doi or pdf|title)
+libby extract --batch pairs.txt
+# pairs.txt format:
+#   path/to/pdf1.pdf|10.1234/doi
+#   path/to/pdf2.pdf|Paper Title
+
 # Pipeline input
 echo "10.1007/s11142-016-9368-9" | libby extract
 cat dois.txt | libby extract
+echo "scanned.pdf|10.1234/doi" | libby extract
+
+# Use Serpapi in batch mode (skip user confirmation)
+libby extract "paper title" --serpapi
 
 # Fetch PDF by DOI
 libby fetch 10.1007/s11142-016-9368-9
@@ -294,6 +323,55 @@ libby fetch doi --source serpapi  # Direct Serpapi search
 **Sci-hub Fallback**: Automatic Selenium WebDriver when aiohttp fails (blocked/CAPTCHA). Requires Chrome browser.
 
 **Serpapi**: Google Scholar search for PDF links (uses API quota, requires confirmation in cascade mode).
+
+## Title Search Cascade (extract)
+
+When extracting by title, libby cascades through sources:
+
+**Order**: Crossref → Semantic Scholar → Serpapi
+
+1. **Crossref** (free): Primary metadata source
+2. **Semantic Scholar** (free): AI paper database with abstracts
+3. **Serpapi** (uses quota): Google Scholar with BibTeX fetching
+
+**Serpapi behavior**:
+- Single input: Prompts user for confirmation
+- Batch mode: Use `--serpapi` flag to auto-enable without prompts
+
+```bash
+# Single title - prompts for Serpapi if Crossref/S2 fail
+libby extract "paper title not in crossref"
+
+# Batch mode - auto-use Serpapi
+libby extract --batch titles.txt --serpapi
+```
+
+## Scanned PDF Support
+
+For PDFs that cannot extract text (scanned documents, images):
+
+**Options**:
+- `--with-doi DOI`: Provide DOI for metadata lookup
+- `--with-title TITLE`: Provide title for cascade search
+
+**Batch input format**: `pdf_path|doi` or `pdf_path|title` (separator: `|`)
+
+```bash
+# Single PDF with DOI
+libby extract scanned.pdf --with-doi 10.1234/abc
+
+# Single PDF with title
+libby extract scanned.pdf --with-title "paper title"
+
+# Batch file with pairs
+libby extract --batch pairs.txt
+# pairs.txt:
+#   scanned1.pdf|10.1234/doi
+#   scanned2.pdf|Paper Title Here
+
+# Pipe input
+echo "scanned.pdf|10.1234/doi" | libby extract
+```
 
 ## Web Search Sources
 

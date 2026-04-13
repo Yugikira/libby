@@ -2,6 +2,38 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.4.5] - 2026-04-13
+
+### Added
+- **Title search cascade: Crossref → S2 → Serpapi**
+  - S2 fallback when Crossref returns no results
+  - Serpapi fallback (requires user confirmation or `--serpapi` flag)
+  - `SerpapiSearchNeeded` exception prompts user for Serpapi usage
+- **Scanned PDF support: `--with-doi` and `--with-title`**
+  - Provide DOI/title for PDFs that cannot extract text (scanned documents)
+  - Batch input: `pdf_path|doi` or `pdf_path|title` format with `|` separator
+  - Pipe stdin support: `echo "pdf.pdf|doi" | libby extract`
+- **`abstract` field in BibTeXMetadata**
+  - Optional abstract field for paper summaries
+  - BibTeX output includes abstract when available
+- **Unified lib_dir configuration**
+  - Single `lib_dir` config (`~/.lib`) with auto-generated subdirectories:
+    - `papers/`: PDF files and BibTeX metadata
+    - `extract_task/`: Failed extraction task logs
+    - `search_results/`: Websearch output files
+  - Simplified config: one base path instead of multiple paths
+
+### Changed
+- **PMC PDF URL format**: `/pdf/main.pdf` instead of `/pdf/`
+  - Avoids 301 redirect issues with aiohttp
+  - Note: PMC uses reCAPTCHA, aiohttp downloads may still fail
+- **extract CLI parameter**: `--serpapi` to auto-enable Serpapi in batch mode
+
+### Fixed
+- **Serpapi metadata extraction**: Proper BibTeX fetching via `serpapi_cite_link`
+  - Complete metadata (journal, volume, pages) from BibTeX
+  - Fallback to basic fields if BibTeX fetch fails
+
 ## [0.4.4] - 2026-04-13
 
 ### Added
