@@ -466,5 +466,7 @@ class PDFFetcher:
         await self.core.close()
         await self.biorxiv.close()
         await self.scihub.close()
+        if self.serpapi:
+            await self.serpapi.close()
         if self._scihub_downloader:
             self._scihub_downloader.close()

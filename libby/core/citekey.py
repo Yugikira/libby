@@ -10,6 +10,9 @@ from libby.models.metadata import BibTeXMetadata
 # Characters invalid in Windows filenames
 INVALID_CHARS = r'[<>:"/\\|?*]'
 
+# Punctuation to remove from title words
+TITLE_PUNCTUATION = r'[,.:;!\-–—\'\"]'
+
 
 class CitekeyFormatter:
     """Format citekeys from metadata."""
@@ -64,11 +67,14 @@ class CitekeyFormatter:
             return first_author.split()[-1]
 
     def _format_title(self, title: str) -> str:
-        """Extract title keywords."""
+        """Extract title keywords, removing punctuation."""
         if not title:
             return "no_title"
 
-        words = title.split()
+        # Remove punctuation from title first
+        title_clean = re.sub(TITLE_PUNCTUATION, '', title)
+
+        words = title_clean.split()
         # Filter ignored words
         words = [w for w in words if w.lower() not in self.ignored_words]
         # Limit word count

@@ -19,6 +19,7 @@ All notable changes to libby will be documented in this file.
   - Previously: fetch used `s2`, websearch used `semantic_scholar`
   - Now: both commands use `s2` consistently
 - **Corrected S2_API_KEY rate limit info**: 1 req/sec (same with or without key)
+- **Citekey formatting**: Remove punctuation from title words (comma, period, hyphen, etc.)
 
 ### Fixed
 - **Semantic Scholar search fixes**
@@ -26,6 +27,7 @@ All notable changes to libby will be documented in this file.
   - Fix year filter: `year_from` now correctly converts to `year={from}-{current_year}` range
   - Parse journal nested object: extract `journal.name`, `volume`, `pages`
   - Journal fallback to `venue` field when `journal.name` is empty
+- **Unclosed session warning**: Close serpapi session in PDFFetcher.close()
 
 ## [0.4.2] - 2026-04-13
 
