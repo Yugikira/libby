@@ -52,7 +52,7 @@ def websearch(
 
     Sources: Crossref, Semantic Scholar, Scholarly, Serpapi (optional)
 
-    Default output: ~/.lib/papers/search_results/yymmdd_{keywords}.bib
+    Default output: ~/.lib/search_results/yymmdd_{keywords}.bib
 
     Examples:
         libby websearch "machine learning"
@@ -243,7 +243,7 @@ def _truncate(text: Optional[str], max_len: int) -> str:
 def _get_default_output_path(query: str, config) -> Path:
     """Generate default output path.
 
-    Format: ~/.lib/papers/search_results/yymmdd_{keywords}.bib
+    Format: ~/.lib/search_results/yymmdd_{keywords}.bib
 
     Args:
         query: Search query
@@ -253,7 +253,7 @@ def _get_default_output_path(query: str, config) -> Path:
         Default output file path
     """
     # Base directory
-    base_dir = config.papers_dir / "search_results"
+    base_dir = config.search_results_dir
     base_dir.mkdir(parents=True, exist_ok=True)
 
     # Date prefix

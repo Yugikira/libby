@@ -172,7 +172,9 @@ def extract(
     # Failed tasks
     if results.failed:
         console.print(f"\n[yellow]Failed: {len(results.failed)} tasks[/yellow]")
-        failed_file = Path("failed_tasks.json")
+        # Save to ~/.lib/extract_task/
+        config.extract_task_dir.mkdir(parents=True, exist_ok=True)
+        failed_file = config.extract_task_dir / "failed_tasks.json"
         save_failed_tasks(results, failed_file)
         console.print(f"[yellow]Failed tasks saved to: {failed_file}[/yellow]")
 

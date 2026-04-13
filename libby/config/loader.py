@@ -37,7 +37,7 @@ def load_config(config_path: Path | None = None) -> LibbyConfig:
 
     # Merge with defaults
     return LibbyConfig(
-        papers_dir=Path(data.get("papers_dir", "~/.lib/papers")).expanduser(),
+        lib_dir=Path(data.get("lib_dir", "~/.lib")).expanduser(),
         citekey=CitekeyConfig(**data.get("citekey", {})),
         retry=RetryConfig(**data.get("retry", {})),
         serpapi=SerpapiConfig(**data.get("serpapi", {})),

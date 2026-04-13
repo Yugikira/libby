@@ -65,9 +65,16 @@ class AIExtractorConfig(BaseModel):
 
 
 class LibbyConfig(BaseModel):
-    """Main configuration for libby."""
+    """Main configuration for libby.
 
-    papers_dir: Path = Field(default_factory=lambda: Path.home() / ".lib" / "papers")
+    lib_dir: Base directory for all libby data.
+    Subdirectories are auto-generated:
+        - papers/: PDF files and BibTeX metadata
+        - extract_task/: Failed extraction task logs
+        - search_results/: Websearch output files
+    """
+
+    lib_dir: Path = Field(default_factory=lambda: Path.home() / ".lib")
     citekey: CitekeyConfig = Field(default_factory=CitekeyConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     serpapi: SerpapiConfig = Field(default_factory=SerpapiConfig)
@@ -81,6 +88,21 @@ class LibbyConfig(BaseModel):
     pdf_max_size: int = 50 * 1024 * 1024  # 50 MB
 
     model_config = ConfigDict(extra="ignore")
+
+    @property
+    def papers_dir(self) -> Path:
+        """Papers directory: lib_dir/papers/"""
+        return self.lib_dir / "papers"
+
+    @property
+    def extract_task_dir(self) -> Path:
+        """Extract task logs directory: lib_dir/extract_task/"""
+        return self.lib_dir / "extract_task"
+
+    @property
+    def search_results_dir(self) -> Path:
+        """Search results directory: lib_dir/search_results/"""
+        return self.lib_dir / "search_results"
 
     def get_s2_api_key(self) -> Optional[str]:
         """Get S2 API key from config or environment."""

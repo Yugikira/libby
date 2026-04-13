@@ -58,9 +58,6 @@ def fetch(
 
     config = load_config(config_path)
 
-    if output_dir:
-        config.papers_dir = output_dir
-
     dois = _gather_inputs(input, batch_file)
 
     if not dois:
@@ -74,7 +71,7 @@ def fetch(
         raise typer.Exit(1)
 
     async def run_fetch():
-        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source)
+        return await _process_batch_fetch(dois, config, dry_run, no_scihub, source, output_dir)
 
     results = asyncio.run(run_fetch())
     _display_results(results, dry_run)
@@ -106,15 +103,20 @@ async def _process_batch_fetch(
     dry_run: bool,
     no_scihub: bool,
     source: Optional[str] = None,
+    output_dir: Optional[Path] = None,
 ) -> list:
     """Process batch of DOIs.
 
     Args:
         source: If specified, use only this source (skip cascade)
+        output_dir: Override papers directory (optional)
     """
 
     extractor = MetadataExtractor(config)
     fetcher = PDFFetcher(config)
+
+    # Use output_dir if provided, otherwise config.papers_dir
+    papers_dir = output_dir or config.papers_dir
 
     results = []
 
@@ -133,7 +135,7 @@ async def _process_batch_fetch(
                 metadata = await extractor.extract_from_doi(doi)
 
                 # Step 2: Determine target path
-                target_dir = config.papers_dir / metadata.citekey
+                target_dir = papers_dir / metadata.citekey
                 target_dir.mkdir(parents=True, exist_ok=True)
                 target_pdf = target_dir / f"{metadata.citekey}.pdf"
 
@@ -185,7 +187,7 @@ async def _process_batch_fetch(
                 progress.remove_task(task)
 
                 # Save bib file first (metadata already extracted)
-                target_dir = config.papers_dir / metadata.citekey
+                target_dir = papers_dir / metadata.citekey
                 target_dir.mkdir(parents=True, exist_ok=True)
                 target_bib = target_dir / f"{metadata.citekey}.bib"
                 target_bib.write_text(BibTeXFormatter().format(metadata))

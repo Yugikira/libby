@@ -3,12 +3,17 @@
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".libby" / "config.yaml"
-DEFAULT_PAPERS_DIR = Path.home() / ".lib" / "papers"
+DEFAULT_LIB_DIR = Path.home() / ".lib"
 
 DEFAULT_CONFIG_YAML = """# libby configuration file
 # Default location: ~/.libby/config.yaml
 
-papers_dir: ~/.lib/papers
+# Base directory for all libby data
+# Subdirectories auto-generated:
+#   - papers/      : PDF files and BibTeX metadata
+#   - extract_task/: Failed extraction task logs
+#   - search_results/: Websearch output files
+lib_dir: ~/.lib
 
 citekey:
   pattern: "{author}_{year}_{title}"
