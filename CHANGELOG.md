@@ -2,6 +2,28 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.5.5] - 2026-04-14
+
+### Fixed
+- **Abstract field in websearch BibTeX output** - Abstract now included in `.bib` files
+  - Original implementation never passed `abstract` to BibTeXMetadata constructor
+  - Works for Crossref, Semantic Scholar, and Serpapi results
+- **Serpapi extra info fields** - Corrected data extraction from Serpapi response
+  - `cited_by_count`: now from `inline_links.cited_by.total` (correct location)
+  - `related_articles_link`: now from `inline_links.related_pages_link`
+  - Changed `doi` field to `title` for reliable result identification
+- **BibTeX output count mismatch** - All results now written to `.bib` file
+  - Previously only wrote results with DOI (skipped ~44 entries in some searches)
+  - Console count now matches `.bib` entry count
+- **Duplicate result merge rule** - Added citekey+title matching
+  - Merge condition: `(doi==doi) or (citekey==citekey AND title.lower()==title.lower())`
+  - Reduces duplicate entries from different sources
+
+### Changed
+- **Serpapi cite link** - No longer force-adds api_key parameter
+  - `serpapi_cite_link` from search results already contains api_key
+  - Added fallback check if link missing api_key
+
 ## [0.5.4] - 2026-04-14
 
 ### Fixed

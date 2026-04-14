@@ -44,14 +44,14 @@ class SerpapiAPI(AsyncAPIClient):
     RATE_LIMIT = RateLimit(1, 5)  # 1 req per 5 seconds
     BASE_URL = "https://serpapi.com/search"
 
-    async def get_bibtex(self, serpapi_cite_link: str, api_key: str) -> Optional[str]:
+    async def get_bibtex(self, serpapi_cite_link: str, api_key: str = None) -> Optional[str]:
         """Fetch BibTeX citation using the cite link from search results.
 
         Uses aiohttp first, falls back to Selenium if blocked (403).
 
         Args:
-            serpapi_cite_link: The serpapi_cite_link from inline_links
-            api_key: Serpapi API key
+            serpapi_cite_link: The serpapi_cite_link from inline_links (already contains api_key)
+            api_key: Serpapi API key (optional, link may already contain it)
 
         Returns:
             BibTeX string or None if not found
@@ -59,8 +59,11 @@ class SerpapiAPI(AsyncAPIClient):
         if not serpapi_cite_link:
             return None
 
-        # Add API key to the cite link
-        full_url = f"{serpapi_cite_link}&api_key={api_key}"
+        # serpapi_cite_link should already contain api_key from search results
+        # If not, append it
+        full_url = serpapi_cite_link
+        if api_key and "api_key" not in serpapi_cite_link:
+            full_url = f"{serpapi_cite_link}&api_key={api_key}"
 
         # Get cite data (contains BibTeX link)
         cite_data = await self.get(full_url, {})

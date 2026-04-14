@@ -163,11 +163,13 @@ class WebSearcher:
                             result = self._parse_serpapi(item)
 
                             # Merge BibTeX data if available
+                            bibtex_data = None
                             if i < len(bibtex_results) and bibtex_results[i]:
                                 bibtex_data = bibtex_results[i]
                                 if bibtex_data:
                                     # Create SearchResult from BibTeX and merge
                                     bibtex_result = SearchResult(
+                                        doi=bibtex_data.get("doi"),
                                         title=bibtex_data.get("title"),
                                         author=bibtex_data.get("author", []),
                                         year=bibtex_data.get("year"),
@@ -181,31 +183,44 @@ class WebSearcher:
                                     )
                                     result.merge_from(bibtex_result)
 
-                            serpapi_extra_info = SerpapiExtraInfo(
-                                doi=result.doi or self._extract_doi_from_serpapi(item),
-                                link=item.get("link"),
-                                pdf_link=self._extract_pdf_link(item),
-                                cited_by_count=item.get("cited_by", {}).get("total"),
-                                bibtex_link=self._extract_bibtex_link(item),
-                            )
-                            serpapi_extra.append(serpapi_extra_info)
+                            # Extract inline_links for cited_by and related_pages
+                            inline_links = item.get("inline_links") or {}
+                            cited_by_info = inline_links.get("cited_by") or {}
 
-                            # Merge into main results if DOI matches
+                            # Merge into main results first (to get DOI from merged result)
+                            merged_target = None
                             if result.doi:
                                 for existing in merged_results:
                                     if existing.doi == result.doi:
                                         existing.merge_from(result)
+                                        merged_target = existing
                                         break
                                 else:
                                     merged_results.append(result)
+                                    merged_target = result
                             elif result.title:
                                 # Try title-based merge
                                 for existing in merged_results:
                                     if existing.title and existing.title.lower() == result.title.lower():
                                         existing.merge_from(result)
+                                        merged_target = existing
                                         break
                                 else:
                                     merged_results.append(result)
+                                    merged_target = result
+
+                            # Use title to identify result (more reliable than doi)
+                            title_for_extra = merged_target.title if merged_target else result.title
+
+                            serpapi_extra_info = SerpapiExtraInfo(
+                                title=title_for_extra,
+                                link=item.get("link"),
+                                pdf_link=self._extract_pdf_link(item),
+                                cited_by_count=cited_by_info.get("total"),
+                                related_articles_link=inline_links.get("related_pages_link"),
+                                bibtex_link=self._extract_bibtex_link(item),
+                            )
+                            serpapi_extra.append(serpapi_extra_info)
 
                 except Exception as e:
                     logger.warning(f"Serpapi search failed: {e}")
@@ -444,39 +459,65 @@ class WebSearcher:
         return await asyncio.gather(*tasks)
 
     def _merge_by_doi(self, results: list[SearchResult]) -> list[SearchResult]:
-        """Merge results by DOI using SearchResult.merge_from().
+        """Merge results using duplicate detection.
+
+        Duplicate rule: (doi==doi) or (citekey==citekey AND title.lower()==title.lower())
 
         Strategy:
         - Results with same DOI are merged
+        - Results with same citekey AND same title are merged
         - Longer values are kept (handled by merge_from)
-        - Results without DOI are kept separately (title-based)
         """
-        doi_map: dict[str, SearchResult] = {}
-        no_doi_results: list[SearchResult] = []
+        merged: list[SearchResult] = []
 
         for r in results:
-            if r.doi:
-                if r.doi in doi_map:
-                    doi_map[r.doi].merge_from(r)
-                else:
-                    doi_map[r.doi] = r
-            else:
-                # Results without DOI - try title-based merge
-                if r.title:
-                    # Look for matching title in no_doi_results
-                    for existing in no_doi_results:
-                        if existing.title and existing.title.lower() == r.title.lower():
-                            existing.merge_from(r)
-                            break
-                    else:
-                        no_doi_results.append(r)
-                else:
-                    # No DOI and no title - just append
-                    no_doi_results.append(r)
+            # Find existing result to merge with
+            target = None
+            for existing in merged:
+                # Check DOI match (highest priority)
+                if r.doi and existing.doi and r.doi == existing.doi:
+                    target = existing
+                    break
+                # Check citekey + title match
+                if r.title and existing.title and r.title.lower() == existing.title.lower():
+                    if self._compute_citekey(r) == self._compute_citekey(existing):
+                        target = existing
+                        break
 
-        # Combine DOI-merged and no-DOI results
-        merged = list(doi_map.values()) + no_doi_results
+            if target:
+                target.merge_from(r)
+            else:
+                merged.append(r)
+
         return merged
+
+    def _compute_citekey(self, r: SearchResult) -> str:
+        """Compute citekey signature for duplicate detection.
+
+        Citekey format: {author_lastname}_{year}_{first_3_title_words}
+        """
+        # Author surname
+        author_part = "unknown"
+        if r.author:
+            first_author = r.author[0]
+            if "," in first_author:
+                author_part = first_author.split(",")[0].strip()
+            else:
+                author_part = first_author.split()[-1]
+
+        # Year
+        year_part = str(r.year or "nd")
+
+        # First 3 title words (excluding common words)
+        title_part = "no_title"
+        if r.title:
+            title_clean = re.sub(r'[,.:;!\-–—\'\"]', '', r.title)
+            words = title_clean.split()
+            ignored = {"the", "a", "an", "and", "or", "in", "on", "for", "to", "of", "with", "is", "are", "was", "were", "be", "do", "does", "did"}
+            words = [w for w in words if w.lower() not in ignored]
+            title_part = "_".join(words[:3]) if words else "no_title"
+
+        return f"{author_part}_{year_part}_{title_part}"
 
     async def _resolve_journal_filter(self, filter: SearchFilter) -> SearchFilter:
         """Resolve venue ↔ ISSN via Crossref.

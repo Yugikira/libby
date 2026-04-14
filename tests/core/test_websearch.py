@@ -661,6 +661,7 @@ def test_parse_bibtex():
   number={4},
   pages={482--497},
   year={2022},
+  doi={10.1111/corgo.12345},
   publisher={Wiley Online Library}
 }"""
 
@@ -668,6 +669,7 @@ def test_parse_bibtex():
 
     assert result["entry_type"] == "article"
     assert result["citekey"] == "chen2022private"
+    assert result["doi"] == "10.1111/corgo.12345"
     assert result["title"] == "Private communication and management forecasts: Evidence from corporate site visits"
     assert len(result["author"]) == 4
     assert result["author"][0] == "Chen, Xiaoqi"

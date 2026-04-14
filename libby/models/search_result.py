@@ -13,7 +13,7 @@ def parse_bibtex(bibtex_str: str) -> dict:
         bibtex_str: BibTeX entry string
 
     Returns:
-        Dict with parsed fields: entry_type, citekey, title, author, journal,
+        Dict with parsed fields: entry_type, citekey, doi, title, author, journal,
         year, volume, number, pages, publisher, url, abstract
     """
     if not bibtex_str:
@@ -50,6 +50,7 @@ def parse_bibtex(bibtex_str: str) -> dict:
     return {
         "entry_type": entry_type,
         "citekey": citekey,
+        "doi": fields.get("doi"),
         "title": fields.get("title"),
         "author": authors,
         "journal": fields.get("journal"),
@@ -167,7 +168,7 @@ class SerpapiExtraInfo:
     Contains link information for user follow-up actions.
     """
 
-    doi: Optional[str] = None
+    title: Optional[str] = None  # Use title to identify result (more reliable than doi)
     link: Optional[str] = None
     pdf_link: Optional[str] = None
     cited_by_count: Optional[int] = None
@@ -176,7 +177,7 @@ class SerpapiExtraInfo:
 
     def to_dict(self) -> dict:
         return {
-            "doi": self.doi,
+            "title": self.title,
             "link": self.link,
             "pdf_link": self.pdf_link,
             "cited_by_count": self.cited_by_count,
@@ -217,21 +218,23 @@ class SearchResults:
 
         bibtex_entries = []
         for r in self.results:
-            if r.doi:  # Only output entries with DOI
-                metadata = BibTeXMetadata(
-                    citekey=citekey_gen.format(r),
-                    entry_type=r.entry_type,
-                    author=r.author,
-                    title=r.title or "",
-                    year=r.year,
-                    doi=r.doi,
-                    journal=r.journal,
-                    volume=r.volume,
-                    number=r.number,
-                    pages=r.pages,
-                    publisher=r.publisher,
-                    url=r.url,
-                )
-                bibtex_entries.append(formatter.format(metadata))
+            # Output all results (not just DOI ones)
+            citekey = citekey_gen.format(r)
+            metadata = BibTeXMetadata(
+                citekey=citekey,
+                entry_type=r.entry_type,
+                author=r.author,
+                title=r.title or "",
+                year=r.year,
+                doi=r.doi,  # DOI may be None for some results
+                journal=r.journal,
+                volume=r.volume,
+                number=r.number,
+                pages=r.pages,
+                publisher=r.publisher,
+                url=r.url,
+                abstract=r.abstract,
+            )
+            bibtex_entries.append(formatter.format(metadata))
 
         return "\n".join(bibtex_entries)

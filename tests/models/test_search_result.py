@@ -47,12 +47,12 @@ def test_search_result_to_dict():
 def test_serpapi_extra_info():
     """Test Serpapi extra info."""
     e = SerpapiExtraInfo(
-        doi="10.1234/test",
+        title="Test Paper Title",
         link="https://example.com",
         cited_by_count=42,
     )
 
     d = e.to_dict()
 
-    assert d["doi"] == "10.1234/test"
+    assert d["title"] == "Test Paper Title"
     assert d["cited_by_count"] == 42
