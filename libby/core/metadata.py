@@ -8,6 +8,7 @@ import logging
 from libby.api.crossref import CrossrefAPI
 from libby.api.semantic_scholar import SemanticScholarAPI
 from libby.models.config import LibbyConfig
+from libby.models.search_filter import SearchFilter
 from libby.core.citekey import CitekeyFormatter
 from libby.core.pdf_text import extract_first_page_text
 from libby.utils.doi_parser import normalize_doi, extract_doi_from_text
@@ -102,7 +103,9 @@ class MetadataExtractor:
 
         # Phase 2: Semantic Scholar
         logger.debug(f"Searching Semantic Scholar for: {title}")
-        s2_results = await self.s2.search(query=title, limit=10)
+        # No year filter for extract - we want to match exact title regardless of year
+        no_year_filter = SearchFilter()  # Empty filter with no year restriction
+        s2_results = await self.s2.search(query=title, limit=10, filter=no_year_filter)
         if s2_results:
             best_result = self._select_best_s2_result(s2_results, title)
             if best_result:

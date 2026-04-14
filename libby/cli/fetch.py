@@ -106,7 +106,7 @@ def _gather_inputs(input: Optional[str], batch_file: Optional[Path]) -> list:
     if batch_file and batch_file.exists():
         dois.extend([
             line.strip()
-            for line in batch_file.read_text().splitlines()
+            for line in batch_file.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ])
     # Stdin pipeline input
@@ -174,7 +174,7 @@ async def _process_batch_fetch(
 
                 # Step 4: Organize files (always save bib, save attempts on failure)
                 target_bib = target_dir / f"{metadata.citekey}.bib"
-                target_bib.write_text(BibTeXFormatter().format(metadata))
+                target_bib.write_text(BibTeXFormatter().format(metadata), encoding="utf-8")
 
                 if result.success and not dry_run:
                     # PDF already downloaded by fetcher to target_pdf
@@ -193,7 +193,7 @@ async def _process_batch_fetch(
                             "attempts": result.source_attempts,
                             "found_urls": [a for a in result.source_attempts if a.get("url")],
                         }
-                        attempts_file.write_text(json.dumps(attempts_data, indent=2))
+                        attempts_file.write_text(json.dumps(attempts_data, indent=2, ensure_ascii=False), encoding="utf-8")
                         console.print(f"[yellow]Saved attempt log: {attempts_file}[/yellow]")
 
                     result.bib_path = target_bib
@@ -210,7 +210,7 @@ async def _process_batch_fetch(
                 target_dir = papers_dir / metadata.citekey
                 target_dir.mkdir(parents=True, exist_ok=True)
                 target_bib = target_dir / f"{metadata.citekey}.bib"
-                target_bib.write_text(BibTeXFormatter().format(metadata))
+                target_bib.write_text(BibTeXFormatter().format(metadata), encoding="utf-8")
 
                 # Save source attempts JSON
                 if e.source_attempts:
@@ -221,7 +221,7 @@ async def _process_batch_fetch(
                         "attempts": e.source_attempts,
                         "found_urls": [a for a in e.source_attempts if a.get("url")],
                     }
-                    attempts_file.write_text(json.dumps(attempts_data, indent=2))
+                    attempts_file.write_text(json.dumps(attempts_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
                 console.print(f"\n[yellow]DOI {doi}: All free sources failed[/yellow]")
                 console.print(e.message)

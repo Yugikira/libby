@@ -15,7 +15,7 @@ from libby.core.metadata import MetadataExtractor, SerpapiSearchNeeded
 from libby.core.pdf_fetcher import PDFFetcher, SerpapiConfirmationNeeded
 from libby.utils.file_ops import FileHandler
 from libby.utils.doi_parser import is_doi
-from libby.cli.utils import read_stdin_lines, process_batch, save_failed_tasks
+from libby.cli.utils import read_stdin_lines, process_batch, save_failed_tasks, _verify_doi_match, _title_similarity
 from libby.cli.serpapi_policy import SerpapiPolicy, parse_serpapi_policy, SERPAPI_POLICY_HELP
 from libby.output.bibtex import BibTeXFormatter
 from libby.output.json import JSONFormatter
@@ -27,6 +27,35 @@ console = Console()
 
 # Separator for pipe/batch input: pdf_path|doi or pdf_path|title
 INPUT_SEPARATOR = "|"
+
+
+def _get_output_dir(output: Optional[Path]) -> Optional[Path]:
+    """Determine output directory from --output parameter.
+
+    For PDF inputs, --output is interpreted as target directory.
+    - If --output ends with "/" in CLI: use it directly as directory
+    - If --output already exists as directory: use it directly
+    - Otherwise: create the directory (treat --output as target folder for PDFs)
+
+    Args:
+        output: --output parameter from CLI
+
+    Returns:
+        Output directory path, or None (use default papers_dir)
+    """
+    if not output:
+        return None
+
+    # If path exists and is a directory, use it
+    if output.exists() and output.is_dir():
+        return output
+
+    # Check if original CLI argument ended with "/" (user explicitly wants directory)
+    # Typer converts Path, but we check the resolved path
+    # For PDF inputs, we treat --output as target directory
+    # Create the directory if it doesn't exist
+    output.mkdir(parents=True, exist_ok=True)
+    return output
 
 
 def parse_input_with_metadata(input_str: str) -> tuple[str, Optional[str], Optional[str]]:
@@ -156,7 +185,7 @@ def extract(
 
     # Batch file (pdf_path|doi or pdf_path|title pairs)
     if batch_file and batch_file.exists():
-        for line in batch_file.read_text().splitlines():
+        for line in batch_file.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 path, doi, title = parse_input_with_metadata(line.strip())
                 inputs.append((path, doi, title))
@@ -175,12 +204,23 @@ def extract(
     # --source serpapi bypasses policy and uses Serpapi directly
     use_serpapi_direct = source and source.lower() == "serpapi"
 
+    # Determine if any input is a PDF file (affects --output interpretation)
+    has_pdf_input = any(
+        Path(inp[0]).suffix.lower() == ".pdf" and Path(inp[0]).exists()
+        for inp in inputs
+        if inp[0]
+    )
+
+    # Determine output directory for PDF files (only if PDF inputs exist)
+    # For non-PDF inputs, --output is treated as file path, not directory
+    output_dir = _get_output_dir(output) if has_pdf_input and output else None
+
     # Handle --source serpapi: direct Serpapi search
     if use_serpapi_direct:
         console.print(f"[green]Processing {len(inputs)} input(s) via Serpapi...[/green]")
 
         async def run_extraction():
-            results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=True)
+            results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=True, output_dir=output_dir)
             await extractor.close()
             return results
 
@@ -213,13 +253,13 @@ def extract(
                     if success:
                         # Save BibTeX
                         target_bib = target_dir / f"{metadata.citekey}.bib"
-                        target_bib.write_text(BibTeXFormatter().format(metadata))
+                        target_bib.write_text(BibTeXFormatter().format(metadata), encoding="utf-8")
                         console.print(f"[green]PDF saved to: {target_pdf}[/green]")
                         console.print(f"[green]BibTeX saved to: {target_bib}[/green]")
 
                         # Output metadata
                         if output:
-                            output.write_text(BibTeXFormatter().format(metadata))
+                            output.write_text(BibTeXFormatter().format(metadata), encoding="utf-8")
                             console.print(f"[green]Output saved to {output}[/green]")
                         else:
                             console.print(BibTeXFormatter().format(metadata))
@@ -294,11 +334,24 @@ def extract(
                     if input_path.suffix.lower() == ".pdf" and input_path.exists():
                         if provided_doi:
                             metadata = await extractor.extract_from_doi(provided_doi)
+                            # Verify DOI match
+                            if not _verify_doi_match(provided_doi, metadata.doi):
+                                raise MetadataNotFoundError(
+                                    f"DOI mismatch: expected '{provided_doi}', got '{metadata.doi}'"
+                                )
                         elif provided_title:
                             metadata = await extractor.extract_from_title(provided_title)
+                            # Verify title similarity (threshold 0.80)
+                            if metadata.title:
+                                similarity = _title_similarity(provided_title, metadata.title)
+                                if similarity < 0.80:
+                                    raise MetadataNotFoundError(
+                                        f"Title mismatch (similarity {similarity:.2f}): "
+                                        f"expected '{provided_title}', got '{metadata.title}'"
+                                    )
                         else:
                             metadata = await extractor.extract_from_pdf(input_path, use_ai=ai_extract)
-                        file_handler.organize_pdf(input_path, metadata, copy=copy)
+                        file_handler.organize_pdf(input_path, metadata, copy=copy, output_dir=output_dir)
 
                     elif input_path.exists():
                         raise MetadataNotFoundError(f"Unsupported file type: {input_path}")
@@ -329,7 +382,7 @@ def extract(
                             try:
                                 if input_path.suffix.lower() == ".pdf" and input_path.exists():
                                     metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
-                                    file_handler.organize_pdf(input_path, metadata, copy=copy)
+                                    file_handler.organize_pdf(input_path, metadata, copy=copy, output_dir=output_dir)
                                 else:
                                     metadata = await extractor2.extract_from_title(e.title, use_serpapi=True)
                                 await extractor2.close()
@@ -365,23 +418,34 @@ def extract(
 
             else:
                 # Batch mode or 'deny'/'auto' policy
-                results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=use_serpapi_in_batch)
+                results = await process_batch(inputs, extractor, file_handler, ai_extract, copy, use_serpapi=use_serpapi_in_batch, output_dir=output_dir)
                 await extractor.close()
                 return results
 
         results = run_async(run_extraction())
 
     # Output results
+    # For PDF inputs with --output: already saved to output_dir by organize_pdf()
+    # For non-PDF inputs (DOI/title): save to --output file if specified
     if results.succeeded:
+        # Check if any PDF input was processed with output_dir
+        if output_dir:
+            # PDF files were organized to output_dir, .bib already saved there
+            console.print(f"[green]PDF files organized to: {output_dir}[/green]")
+
+        # For non-PDF inputs or batch: still output the combined bib
         metadata_list = [
             BibTeXMetadata(**r["metadata"]) for r in results.succeeded
         ]
         output_text = formatter.format_batch(metadata_list)
 
-        if output:
-            output.write_text(output_text)
+        # If --output was specified as a file (not directory) and no PDFs, write to file
+        if output and not output_dir:
+            # This means --output was a file path and there were no PDF inputs
+            output.write_text(output_text, encoding="utf-8")
             console.print(f"[green]Output saved to {output}[/green]")
-        else:
+        elif not output_dir:
+            # No --output specified, print to console
             console.print(output_text)
 
     # Failed tasks
@@ -392,6 +456,12 @@ def extract(
         failed_file = config.extract_task_dir / "failed_tasks.json"
         save_failed_tasks(results, failed_file)
         console.print(f"[yellow]Failed tasks saved to: {failed_file}[/yellow]")
+    else:
+        # All tasks succeeded - clean up any existing failed_tasks.json
+        failed_file = config.extract_task_dir / "failed_tasks.json"
+        if failed_file.exists():
+            failed_file.unlink()
+            console.print(f"[green]Cleaned up: {failed_file}[/green]")
 
     # Summary
     console.print(f"\n[green]Succeeded: {len(results.succeeded)}[/green]")

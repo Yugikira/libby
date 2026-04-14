@@ -30,7 +30,7 @@ def load_config(config_path: Path | None = None) -> LibbyConfig:
 
     # Load YAML
     if path.exists():
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
     else:
         data = {}

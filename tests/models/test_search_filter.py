@@ -5,11 +5,15 @@ from datetime import datetime
 
 
 def test_search_filter_defaults():
-    """Test default year_from is 2 years ago."""
+    """Test default filter has no auto-set year_from.
+
+    Note: year_from default is set by caller (CLI/API), not by SearchFilter itself.
+    This allows extract to work without year restrictions while websearch applies default.
+    """
     filter = SearchFilter()
 
-    expected_year = datetime.now().year - 2
-    assert filter.year_from == expected_year
+    # SearchFilter does NOT auto-set year_from - caller decides
+    assert filter.year_from is None
     assert filter.year_to is None
     assert filter.venue is None
     assert filter.issn is None

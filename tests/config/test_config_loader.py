@@ -20,10 +20,14 @@ def test_load_default_config():
 
 
 def test_load_custom_config():
-    """Test loading custom config file."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+    """Test loading custom config file.
+
+    Note: papers_dir is derived from lib_dir, not a direct config field.
+    The config uses 'lib_dir' as base, with auto-generated subdirectories.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
         f.write("""
-papers_dir: /custom/papers
+lib_dir: /custom/lib
 citekey:
   author_words: 2
   title_words: 5
@@ -32,7 +36,8 @@ citekey:
 
     try:
         config = load_config(config_path=temp_path)
-        assert config.papers_dir == Path("/custom/papers")
+        # papers_dir is derived from lib_dir
+        assert config.papers_dir == Path("/custom/lib/papers")
         assert config.citekey.author_words == 2
         assert config.citekey.title_words == 5
     finally:

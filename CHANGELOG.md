@@ -2,6 +2,33 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.5.4] - 2026-04-14
+
+### Fixed
+- **Windows GBK encoding error** - Added explicit `encoding="utf-8"` to all file operations
+  - Fixes `UnicodeEncodeError: 'gbk' codec can't encode character` on Windows
+  - Applied to: `write_text()`, `open()`, `json.dumps()` across all modules
+  - Files fixed: cli/websearch.py, cli/extract.py, cli/fetch.py, cli/utils.py, utils/file_ops.py, config/loader.py
+- **Year filter isolation in extract command** - Year filter no longer applied to title search
+  - `extract_from_title()` now uses empty `SearchFilter()` for S2, allowing any year
+  - Previously, default `year_from=current_year-2` filtered out older papers
+  - Added verification for `--with-doi` and `--with-title`: checks exact match after normalization
+- **failed_tasks.json persistence** - File now deleted when all tasks succeed
+  - Prevents stale failure data from persisting across successful runs
+  - Shows cleanup message when removing old failed_tasks.json
+
+### Changed
+- **--output behavior for PDF vs non-PDF inputs**
+  - PDF input: `--output` is target directory for both PDF and .bib files
+  - Non-PDF input (DOI/title): `--output` is file path for .bib output
+  - Papers folder used as default only when `--output` not specified
+- **Title verification for --with-title** - Fuzzy match with 0.80 threshold
+  - Uses Jaccard similarity on normalized titles (lowercase, collapse spaces)
+  - Allows minor variations (missing/extra words) for command-line input convenience
+- **SearchFilter default behavior documented** - No auto-set year_from in SearchFilter class
+  - Caller (CLI/API) decides year filter, not the SearchFilter dataclass
+  - Allows extract to work without year restrictions while websearch defaults to recent papers
+
 ## [0.5.3] - 2026-04-13
 
 ### Removed

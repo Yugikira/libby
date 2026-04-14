@@ -183,7 +183,7 @@ def _handle_doi_fallback(doi: str, config, output: Optional[Path], format: str):
 
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_text(output_text)
+                output.write_text(output_text, encoding="utf-8")
                 console.print(f"[green]Metadata saved to {output}[/green]")
             else:
                 console.print("\n[green]Metadata:[/green]")
@@ -300,10 +300,10 @@ def _save_output(results: SearchResults, output: Path, format: str, config):
 
     if format == "json":
         output_text = results.to_json()
-        output.write_text(output_text)
+        output.write_text(output_text, encoding="utf-8")
     else:
         output_text = results.to_bibtex(config.citekey)
-        output.write_text(output_text)
+        output.write_text(output_text, encoding="utf-8")
 
     # Serpapi extra: save separately if available
     if results.serpapi_extra and output:
@@ -312,5 +312,5 @@ def _save_output(results: SearchResults, output: Path, format: str, config):
             "query": results.query,
             "serpapi_extra": [e.to_dict() for e in results.serpapi_extra],
         }
-        serpapi_file.write_text(json.dumps(serpapi_data, indent=2))
+        serpapi_file.write_text(json.dumps(serpapi_data, indent=2, ensure_ascii=False), encoding="utf-8")
         console.print(f"[green]Serpapi extra saved to {serpapi_file}[/green]")
