@@ -381,10 +381,26 @@ class MetadataExtractor:
         # Try AI extraction first if enabled
         if use_ai:
             result = await self._ai_extract(text)
+            ai_title = result.get("title")
+
             if result.get("doi"):
-                return await self.extract_from_doi(result["doi"])
-            if result.get("title"):
-                return await self.extract_from_title(result["title"])
+                metadata = await self.extract_from_doi(result["doi"])
+
+                # Verify title match to detect hallucinated DOIs
+                if ai_title and metadata.title:
+                    similarity = self._title_similarity(ai_title, metadata.title)
+                    if similarity < 0.85:
+                        # DOI likely hallucinated, fallback to title search
+                        logger.warning(
+                            f"AI DOI mismatch (similarity {similarity:.2f}): "
+                            f"AI title '{ai_title}' vs Crossref title '{metadata.title}'"
+                        )
+                        return await self.extract_from_title(ai_title)
+
+                return metadata
+
+            if ai_title:
+                return await self.extract_from_title(ai_title)
 
         # Regex fallback
         doi = extract_doi_from_text(text)

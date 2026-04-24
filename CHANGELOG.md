@@ -2,6 +2,15 @@
 
 All notable changes to libby will be documented in this file.
 
+## [0.5.6] - 2026-04-24
+
+### Added
+- **Title verification for AI-extracted DOIs** - Prevents hallucinated DOI errors
+  - After `extract_from_doi()`, compares AI title with Crossref title
+  - If similarity < 0.85, falls back to `extract_from_title(ai_title)`
+  - Logs warning when fallback triggers (helpful for debugging)
+  - Skips verification if AI returns DOI but no title
+
 ## [0.5.5] - 2026-04-14
 
 ### Fixed

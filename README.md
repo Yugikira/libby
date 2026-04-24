@@ -168,6 +168,10 @@ libby extract "On the Impossibility of Informationally Efficient Markets"
 # Extract from PDF with AI assistance
 libby extract paper.pdf --ai-extract
 
+# --ai-extract: LLM extracts DOI/title from PDF first page
+# Title verification: If AI DOI returns mismatched title (similarity < 0.85),
+# falls back to title-based search to prevent hallucinated DOI errors
+
 # Scanned PDF: provide DOI or title manually
 libby extract scanned.pdf --with-doi 10.1007/s11142-016-9368-9
 libby extract scanned.pdf --with-title "paper title here"
